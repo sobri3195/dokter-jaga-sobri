@@ -39,8 +39,15 @@ jobs:
       - run: npm run lint && npm run typecheck && npm test && npm run build
       - run: npm run db:setup && npm run test:integration
       - run: npx playwright-core install --with-deps chromium
+      - name: Prepare browser database
+        env:
+          POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+        run: docker exec "$POSTGRES_CONTAINER" createdb -U jaga jaga_igd_browser
       - name: API and browser smoke tests
+        env:
+          DATABASE_URL: postgresql://jaga:jaga@127.0.0.1:5432/jaga_igd_browser
         run: |
+          npm run db:setup
           npm run dev > /tmp/jaga-dev.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" 2>/dev/null || true' EXIT

@@ -33,7 +33,7 @@ test('deployed API routes, guest cookie, replay, conflict, and debrief', async (
   assert.deepEqual(await bootstrap.json(), {})
   const issued = bootstrap.headers.get('set-cookie')
   assert.ok(issued)
-  assert.ok(issued.includes('HttpOnly') && issued.includes('SameSite=Lax'))
+  assert.match(issued, /HttpOnly; SameSite=Lax; Max-Age=7776000/)
   if (url.protocol === 'https:') assert.match(issued, /;\s*Secure(?:;|$)/i)
   assert.equal(list.headers.get('cache-control'), 'private, no-store')
   const firstCookie = issued.split(';')[0]
@@ -49,7 +49,7 @@ test('deployed API routes, guest cookie, replay, conflict, and debrief', async (
   cookie = firstCookie
   const repeatedBootstrap = await request('/guests', {})
   assert.equal(repeatedBootstrap.status, 200)
-  assert.equal(repeatedBootstrap.headers.get('set-cookie'), null)
+  assert.equal(repeatedBootstrap.headers.get('set-cookie'), issued)
   await repeatedBootstrap.json()
   const forbidden = await request('/sessions', creation, 'https://wrong-origin.invalid')
   assert.equal(forbidden.status, 403)

@@ -108,3 +108,29 @@ test('engine v1 continues a persisted pre-decision snapshot and preserves its ou
   assert.equal(engine.debrief(scenario, state).outcome, scenario.outcomes.primary)
   assert.throws(() => engineFor(999), /Unsupported simulation engine version/)
 })
+
+test('delegation after the deadline is flagged and logged as unfinished', () => {
+  const pre = play(['transport', ...Array<string>(11).fill('wait')])
+  assert.equal(pre.minute, 57)
+  const option = snapshot(scenario, pre, 'late', 12).options.find(action => action.id === 'primary')
+  assert.equal(option?.resultInMinutes, 5)
+  assert.equal(option?.resultAfterDeadline, true)
+  const calling = apply(scenario, pre, 'primary')!
+  assert.match(snapshot(scenario, calling, 'late', 13).tasks[0].text, /melewati akhir skenario/)
+  const done = apply(scenario, calling, 'wait')!
+  const report = debrief(scenario, done)
+  const interrupted = report.timeline.find(entry => entry.id === 'task-interrupted')
+  assert.equal(interrupted?.minute, 60)
+  assert.match(interrupted?.text ?? '', /dijadwalkan menit 62/)
+  assert.equal(report.timeline.some(entry => entry.id === 'receiver'), false)
+  assert.match(report.ratings.find(rating => rating.label === 'Koordinasi')?.reason ?? '', /Panggilan belum selesai/)
+})
+
+test('a result due exactly at the deadline still arrives', () => {
+  const pre = play(Array<string>(11).fill('wait'))
+  assert.equal(pre.minute, 55)
+  const option = snapshot(scenario, pre, 'edge', 11).options.find(action => action.id === 'primary')
+  assert.equal(option?.resultAfterDeadline, undefined)
+  const done = apply(scenario, apply(scenario, pre, 'primary')!, 'wait')!
+  assert.deepEqual(done.events.slice(-2).map(event => event.id), ['receiver', 'outcome'])
+})
