@@ -19,7 +19,7 @@ npm run dev
 
 Buka `http://localhost:5173`. Vite meneruskan permintaan `/api` ke server pengembangan pada port 3001. Isi `APP_ORIGIN` dengan origin halaman yang tepat jika mengubah alamat. Simpan `DATABASE_URL` di sisi server. `.env` diabaikan oleh Git.
 
-`npm run db:setup` menjalankan migrasi di `db/` dan menambahkan versi kasus dari `server/scenario.ts`. Jalankan kembali untuk setup yang sama. Untuk mengubah isi skenario yang sudah diterbitkan, naikkan nomor versi. Sesi lama tetap merujuk ke versi awalnya. Sesi yang dipilih melalui **Ulang kasus** memakai versi kasus yang diulang.
+`npm run db:setup` menjalankan migrasi di `db/` dan menambahkan versi kasus dari `server/scenario.ts`. Jalankan kembali untuk setup yang sama. Untuk mengubah isi skenario yang sudah diterbitkan, naikkan nomor versi. Sesi lama tetap merujuk ke versi awalnya. Sesi yang dipilih melalui **Ulang kasus** memakai versi kasus yang diulang. Jika respons saat memulai atau mengulang kasus terputus, muat ulang tab atau coba lagi untuk memulihkan permintaan yang sama.
 
 ## Demonstrasi
 
