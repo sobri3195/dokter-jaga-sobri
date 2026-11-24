@@ -1,0 +1,9 @@
+{
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/api/cases", "destination": "/api/dispatch?route=cases" },
+    { "source": "/api/sessions", "destination": "/api/dispatch?route=sessions" },
+    { "source": "/api/sessions/:id", "destination": "/api/dispatch?route=sessions/:id" },
+    { "source": "/api/sessions/:id/:resource", "destination": "/api/dispatch?route=sessions/:id/:resource" }
+  ]
+}
