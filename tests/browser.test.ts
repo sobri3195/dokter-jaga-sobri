@@ -80,9 +80,25 @@ test('360px keyboard, interrupted request, refresh, debrief and repeat', async t
   }
   await button('Selesaikan transfer 2 mnt').click()
   await page.locator('.outcome').getByText('Transfer ke RS utama selesai.').waitFor()
+  const creationIds: string[] = []
+  await page.route(url => url.pathname === '/api/sessions', async route => {
+    if (route.request().method() !== 'POST') return route.continue()
+    creationIds.push(route.request().postDataJSON().creationId)
+    if (creationIds.length === 1) {
+      const response = await route.fetch()
+      assert.equal(response.status(), 201)
+      await route.abort()
+    } else await route.continue()
+  })
   await button('Ulang kasus').click()
+  await page.getByRole('alert').waitFor()
+  await page.reload()
   await page.locator('.clock').getByText('+00 mnt', { exact: true }).waitFor()
+  assert.equal(creationIds.length, 2)
+  assert.equal(creationIds[0], creationIds[1])
   assert.notEqual(await page.evaluate(() => sessionStorage.getItem('jaga-session')), currentId)
+  const history = await (await page.request.get(new URL('/api/sessions', page.url()).href)).json()
+  assert.equal(history.length, 2)
   await button('Riwayat').click()
   await button('Lihat hasil').click()
   await page.locator('.outcome').getByText('Transfer ke RS utama selesai.').waitFor()

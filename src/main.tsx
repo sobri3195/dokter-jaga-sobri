@@ -20,6 +20,14 @@ type Panel = 'Pasien' | 'Aksi' | 'Rujukan'
 type Pending = { actionId: string; commandId: string; expectedRevision: number }
 const panels: Panel[] = ['Pasien', 'Aksi', 'Rujukan']
 const clock = (minute: number) => `+${String(minute).padStart(2, '0')} mnt`
+type Creation = { caseId: string; version: number; creationId: string }
+const creationKey = 'jaga-pending-creation'
+
+function pendingCreation() {
+  const stored = sessionStorage.getItem(creationKey)
+  return stored ? JSON.parse(stored) as Creation : undefined
+}
+
 const pendingKey = (id: string) => 'jaga-pending:' + id
 
 function Timeline({ entries }: { entries: Entry[] }) {
@@ -54,16 +62,21 @@ function App() {
     setCurrent(previous => previous?.id === state.id && previous.revision > state.revision ? previous : state)
   }
 
-  async function open(id: string) {
-    const state = await api<Snapshot>('/sessions/' + id)
-    const stored = sessionStorage.getItem(pendingKey(id))
+  function enterSession(state: Snapshot) {
+    const stored = sessionStorage.getItem(pendingKey(state.id))
     setNeedsSync(false)
     setPending(stored ? JSON.parse(stored) as Pending : undefined)
+    setBrief(undefined)
     setResult(undefined)
-    accept(state)
+    setNotice('')
     setPanel('Pasien')
-    sessionStorage.setItem('jaga-session', id)
+    accept(state)
+    sessionStorage.setItem('jaga-session', state.id)
     focusHeading()
+  }
+
+  async function open(id: string) {
+    enterSession(await api<Snapshot>('/sessions/' + id))
   }
 
   async function initialize() {
@@ -72,6 +85,11 @@ function App() {
     try {
       const [available] = await Promise.all([api<CaseInfo[]>('/cases'), list()])
       setCases(available)
+      const creation = pendingCreation()
+      if (creation) {
+        await createSession(creation)
+        return
+      }
       const id = sessionStorage.getItem('jaga-session')
       if (id) {
         try { await open(id) }
@@ -114,19 +132,23 @@ function App() {
     finally { lock.current = false; setBusy(false) }
   }
 
+  async function createSession(creation: Creation) {
+    sessionStorage.setItem(creationKey, JSON.stringify(creation))
+    let state: Snapshot
+    try {
+      state = await api<Snapshot>('/sessions', creation)
+    } catch (error) {
+      if (error instanceof RequestError && error.status < 500) sessionStorage.removeItem(creationKey)
+      throw error
+    }
+    enterSession(state)
+    sessionStorage.removeItem(creationKey)
+  }
+
   function start(info: CaseInfo) {
-    return run(async () => {
-      const state = await api<Snapshot>('/sessions', { caseId: info.id, version: info.version })
-      setNeedsSync(false)
-      setPending(undefined)
-      setBrief(undefined)
-      setResult(undefined)
-      setNotice('')
-      setPanel('Pasien')
-      accept(state)
-      sessionStorage.setItem('jaga-session', state.id)
-      focusHeading()
-    })
+    return run(() => createSession(pendingCreation() ?? {
+      caseId: info.id, version: info.version, creationId: crypto.randomUUID(),
+    }))
   }
 
   async function syncSession(id: string) {

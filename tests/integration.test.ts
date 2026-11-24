@@ -34,8 +34,16 @@ test('Postgres transactions and session API', async t => {
   assert.equal(list.headers.get('cache-control'), 'private, no-store')
   const input = { caseId: scenario.info.id, version }
   assert.equal((await req('/sessions', input, cookie, 'https://example.invalid')).status, 403)
-  const created = await req('/sessions', input)
+  const creation = { ...input, creationId: randomUUID() }
+  const [created, repeatedCreate] = await Promise.all([req('/sessions', creation), req('/sessions', creation)])
   assert.equal(created.status, 201)
+  assert.equal(repeatedCreate.status, 201)
+  assert.deepEqual(repeatedCreate.data, created.data)
+  assert.equal((await req('/sessions')).data.length, 1)
+  assert.equal((await req('/sessions', { ...creation, version: version + 1 })).status, 409)
+  const anotherGuest = await req('/sessions', creation, '')
+  assert.equal(anotherGuest.status, 201)
+  assert.notEqual(anotherGuest.data.id, created.data.id)
   const path = '/sessions/' + created.data.id
   assert.equal((await req(path, undefined, '')).status, 404)
   assert.equal((await req(path + '/debrief')).status, 404)
@@ -50,6 +58,9 @@ test('Postgres transactions and session API', async t => {
   const [a, b] = await Promise.all([send(action('reassess', 1)), send(action('reassess', 1))])
   assert.deepEqual([a.status, b.status].sort(), [200, 409])
   assert.equal((await req(path)).data.revision, 2)
+  const resumedCreation = await req('/sessions', creation)
+  assert.equal(resumedCreation.data.id, created.data.id)
+  assert.equal(resumedCreation.data.revision, 2)
   assert.deepEqual((await send(primary)).data, first.data)
   assert.equal((await send({ ...primary, actionId: 'wait' })).status, 409)
   assert.equal((await req(path + '/actions', { ...action('wait', 2), parameters: { extra: true } })).status, 400)

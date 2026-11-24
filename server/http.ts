@@ -8,7 +8,7 @@ import type { State } from './engine'
 import type { Scenario } from './scenario'
 
 const uuid = z.uuid()
-const creation = z.strictObject({ caseId: z.string().min(1).max(80), version: z.int().positive().max(2147483647) })
+const creation = z.strictObject({ caseId: z.string().min(1).max(80), version: z.int().positive().max(2147483647), creationId: uuid.optional() })
 const command = z.strictObject({
   actionId: z.string().min(1).max(40), commandId: uuid, expectedRevision: z.int().nonnegative().max(2147483647),
   parameters: z.strictObject({}).optional(),
@@ -81,13 +81,27 @@ const sessionQuery = `SELECT s.id,s.snapshot,s.revision,s.finished,v.definition
 async function create(req: IncomingMessage, owner: string) {
   const input = await body(req, creation)
   return transaction(async client => {
+    if (input.creationId) {
+      await client.query('SELECT id FROM guests WHERE id=$1 FOR NO KEY UPDATE', [owner])
+      const { rows: existing } = await client.query<Stored>(`SELECT s.id,s.snapshot,s.revision,s.finished,v.definition
+        FROM sessions s JOIN case_versions v ON (v.case_id,v.version)=(s.case_id,s.version)
+        WHERE s.guest_id=$1 AND s.creation_id=$2`, [owner, input.creationId])
+      const replay = existing[0]
+      if (replay) {
+        const { id, version } = replay.definition.info
+        if (id !== input.caseId || version !== input.version) {
+          return new HttpError(409, 'ID pembuatan sesi sudah dipakai untuk kasus atau versi berbeda.')
+        }
+        return snapshot(replay.definition, replay.snapshot, replay.id, replay.revision)
+      }
+    }
     if (!await permit(client, owner, 'create')) return new HttpError(429, 'Terlalu banyak sesi. Coba lagi dalam satu menit.')
     const { rows } = await client.query<{ definition: Scenario }>('SELECT definition FROM case_versions WHERE case_id=$1 AND version=$2', [input.caseId, input.version])
     if (!rows.length) return new HttpError(404, 'Versi kasus tidak ditemukan.')
     const { definition } = rows[0]
     const id = randomUUID()
     const state = initial(definition)
-    await client.query('INSERT INTO sessions (id,guest_id,case_id,version,snapshot) VALUES ($1,$2,$3,$4,$5)', [id, owner, input.caseId, input.version, state])
+    await client.query('INSERT INTO sessions (id,guest_id,case_id,version,snapshot,creation_id) VALUES ($1,$2,$3,$4,$5,$6)', [id, owner, input.caseId, input.version, state, input.creationId ?? null])
     await saveEvents(client, id, state, 0)
     return snapshot(definition, state, id, 0)
   })

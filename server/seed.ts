@@ -1,10 +1,14 @@
-import { readFile } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { pool, transaction } from './db'
 import { scenario } from './scenario'
 
 try {
   await transaction(async client => {
-    await client.query(await readFile(new URL('../db/001_init.sql', import.meta.url), 'utf8'))
+    const directory = new URL('../db/', import.meta.url)
+    const migrations = (await readdir(directory)).filter(name => /^\d+_.*\.sql$/.test(name)).sort()
+    for (const name of migrations) {
+      await client.query(await readFile(new URL(name, directory), 'utf8'))
+    }
     const { id, version } = scenario.info
     await client.query('INSERT INTO cases (id) VALUES ($1) ON CONFLICT DO NOTHING', [id])
     await client.query('INSERT INTO case_versions VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [id, version, scenario])
