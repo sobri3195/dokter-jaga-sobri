@@ -59,10 +59,12 @@ main { max-width: 1100px; margin: 1.9rem auto; padding: 0 1.25rem 2rem; }
 small { white-space: nowrap; color: var(--muted); }
 .retry { margin: 1rem 0 0; }
 .timeline, .history { padding: 0; list-style: none; }
-.timeline li { display: grid; grid-template-columns: 5rem 1fr; gap: .35rem; padding: .5rem 0; border-top: 1px solid var(--line); }
+.timeline > li { display: grid; grid-template-columns: 5rem 1fr; gap: .35rem; padding: .5rem 0; border-top: 1px solid var(--line); }
 time { font-size: .84rem; font-weight: 700; color: var(--teal); }
 .referral, .ratings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem; }
 .referral div, .ratings article { padding: .75rem; background: #f4f8f5; border: 1px solid var(--line); border-radius: 8px; }
+.timeline summary { cursor: pointer; color: var(--teal); }
+.ratings strong + p { margin-top: .5rem; }
 .ratings h3 { margin-top: 0; }
 .ratings { margin-bottom: 1rem; }
 dt { font-weight: 700; }

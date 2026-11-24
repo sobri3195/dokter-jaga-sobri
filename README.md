@@ -56,3 +56,7 @@ Jalankan `npm run test:browser` dengan server pengembangan aktif. Uji pada lebar
 - Atur `APP_ORIGIN` bila memakai satu domain tetap. Bila nilainya kosong di Vercel, API menggunakan host HTTPS deployment agar Preview per branch dapat menerima permintaan same-origin.
 - Jalankan `npm run db:setup` dengan URL database target sebelum menggunakan deployment. Simpan kredensial di konfigurasi server Vercel dan jalankan migrasi melalui koneksi admin yang sesuai.
 - Uji **Mulai kasus**, refresh sesi, aksi, dan debrief di Preview sebelum promosi ke Production. Verifikasi lokal memakai Postgres 17. Vercel Preview, telaah klinis (T12), dan uji peserta (T13) masih tertunda.
+
+Untuk smoke test deployment, jalankan `SMOKE_URL=https://alamat-preview npm run test:deployment` setelah migrasi. Tes membuat satu sesi fiktif dan memeriksa cookie HTTPS, penolakan origin berbeda, refresh, pengiriman ulang perintah, konflik revisi, serta debrief. Gunakan Preview dengan database khusus Preview dan akses yang mengizinkan runner. Untuk browser, jalankan `BROWSER_URL=https://alamat-preview npm run test:browser`.
+
+Debrief baru mencatat rentang waktu dan informasi yang terlihat saat aksi dipilih. Hasil yang sudah tersimpan tetap tersedia dalam format semula. Rubrik proses tetap berstatus draf hingga T12 dan T13 selesai.
