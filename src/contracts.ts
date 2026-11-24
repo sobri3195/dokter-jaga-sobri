@@ -1,7 +1,13 @@
 export interface Action { id: string; label: string; duration: number }
 export interface Fact { id: string; text: string }
 export interface Vital { minute: number; pulse: number; pressure: string; breathing: number; oxygen: number }
-export interface Entry { minute: number; text: string; id: string }
+export interface Entry {
+  minute: number; text: string; id: string;
+  decision?: {
+    actionId: string; endMinute: number; interrupted: boolean;
+    facts: Fact[]; vital: Vital; receiver: string; transport: string;
+  };
+}
 export interface CaseInfo { id: string; version: number; title: string; brief: string; facility: string }
 export interface SessionInfo { id: string; title: string; status: 'active' | 'finished'; created: string }
 export interface Handover { minute: number; destination: string; sections: { label: string; text: string }[] }
@@ -13,5 +19,5 @@ export interface Snapshot {
 }
 export interface Debrief {
   outcome: string; timeline: Entry[];
-  ratings: { label: string; status: 'Tercapai' | 'Sebagian' | 'Terlewat' | 'Tidak berlaku'; evidence: Entry[] }[];
+  ratings: { label: string; status: 'Tercapai' | 'Sebagian' | 'Terlewat' | 'Tidak berlaku'; reason?: string; evidence: Entry[] }[];
 }

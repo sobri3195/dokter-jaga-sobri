@@ -80,6 +80,14 @@ test('360px keyboard, interrupted request, refresh, debrief and repeat', async t
   }
   await button('Selesaikan transfer 2 mnt').click()
   await page.locator('.outcome').getByText('Transfer ke RS utama selesai.').waitFor()
+  await page.getByRole('article').filter({ hasText: 'Handover' })
+    .getByText(/Temuan penilaian ulang saat pengiriman tercakup/).waitFor()
+  const transferDecision = page.getByRole('listitem').filter({ hasText: 'Selesaikan transfer' })
+  await transferDecision.getByText('+34 mnt', { exact: true }).waitFor()
+  await transferDecision.getByText('+36 mnt', { exact: true }).waitFor()
+  await transferDecision.getByText('Informasi saat memilih aksi').click()
+  await transferDecision.getByText(/RS utama siap menerima · Ambulans siap/).waitFor()
+
   const creationIds: string[] = []
   await page.route(url => url.pathname === '/api/sessions', async route => {
     if (route.request().method() !== 'POST') return route.continue()

@@ -53,5 +53,39 @@ test('unresolved barriers end at the deadline', () => {
   assert.equal(state.outcome, scenario.outcomes.deadline)
   assert.equal(state.minute, 60)
   assert.equal(apply(scenario, state, 'wait'), null)
-  assert.equal(debrief(scenario, state).ratings.at(-1)?.status, 'Tidak berlaku')
+  const review = debrief(scenario, state)
+  assert.equal(review.ratings.at(-1)?.status, 'Tidak berlaku')
+  assert.deepEqual(review.timeline.flatMap(e => e.decision ? [[e.minute, e.decision.endMinute]] : []),
+    Array.from({ length: 12 }, (_, i) => [i * 5, (i + 1) * 5]))
+})
+
+
+test('transfer records its duration and handover explains missing reassessment', () => {
+  const state = play(['primary', 'transport', 'wait', 'handover', ...Array<string>(4).fill('wait'), 'transfer'])
+  const report = debrief(scenario, state)
+  const transfer = report.timeline.find(event => event.decision?.actionId === 'transfer')!
+  assert.equal(transfer.decision?.endMinute, transfer.minute + 2)
+  const result = report.ratings.find(r => r.label === 'Handover')
+  assert.equal(result?.status, 'Sebagian')
+  assert.match(result?.reason ?? '', /Belum ada temuan penilaian ulang/)
+  assert.deepEqual(result?.evidence.find(e => e.decision)?.decision?.facts.map(f => f.id), ['family'])
+})
+
+test('a deadline interrupts a decision at its actual end minute', () => {
+  const state = play(['transport', ...Array<string>(12).fill('wait')])
+  assert.equal(state.minute, 60)
+  const event = state.events.filter(e => e.decision).at(-1)!
+  assert.equal(event.minute, 57)
+  assert.equal(event.decision?.endMinute, 60)
+  assert.equal(event.decision?.interrupted, true)
+})
+
+test('priority rubric is independent of the primary hospital cutoff', () => {
+  const scenarioWithoutPrimaryCapacity = { ...scenario, primaryCutoff: -1 }
+  let state = initial(scenarioWithoutPrimaryCapacity)
+  for (const id of ['primary', ...Array<string>(12).fill('wait')]) {
+    state = apply(scenarioWithoutPrimaryCapacity, state, id)!
+  }
+  assert.equal(state.receiver, 'unavailable')
+  assert.equal(debrief(scenarioWithoutPrimaryCapacity, state).ratings[0].status, 'Tercapai')
 })

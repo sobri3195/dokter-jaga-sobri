@@ -30,9 +30,20 @@ function pendingCreation() {
 
 const pendingKey = (id: string) => 'jaga-pending:' + id
 
-function Timeline({ entries }: { entries: Entry[] }) {
-  return <ol className="timeline">{entries.map((event, index) =>
-    <li key={index}><time>{clock(event.minute)}</time><span>{event.text}</span></li>)}</ol>
+function Timeline({ entries, showDecision = false }: { entries: Entry[]; showDecision?: boolean }) {
+  return <ol className="timeline">{entries.map((event, index) => <li key={index}>
+    <div><time>{clock(event.minute)}</time>
+      {event.decision && event.decision.endMinute !== event.minute && <><br /><small>sampai</small><br /><time>{clock(event.decision.endMinute)}</time></>}
+    </div>
+    <div>{event.text}{event.decision?.interrupted && ' · Terhenti saat waktu skenario berakhir'}
+      {showDecision && event.decision && <details>
+        <summary>Informasi saat memilih aksi</summary>
+        <p>{event.decision.receiver} · {event.decision.transport}</p>
+        <ul>{event.decision.facts.map(fact => <li key={fact.id}>{fact.text}</li>)}</ul>
+        <p>Nadi {event.decision.vital.pulse} · TD {event.decision.vital.pressure} · RR {event.decision.vital.breathing} · SpO₂ {event.decision.vital.oxygen}%</p>
+      </details>}
+    </div>
+  </li>)}</ol>
 }
 
 function App() {
@@ -282,8 +293,8 @@ function App() {
         <p className="eyebrow">DEBRIEF · RUBRIK DRAF</p><h1 ref={heading} tabIndex={-1}>Hasil sesi</h1>
         {result ? <>
           <p className="outcome">{result.outcome}</p><h2>Penilaian proses</h2>
-          <div className="ratings">{result.ratings.map(item => <article key={item.label}><h3>{item.label}</h3><strong>{item.status}</strong><Timeline entries={item.evidence} /></article>)}</div>
-          <h2>Lini waktu sesi</h2><Timeline entries={result.timeline} />
+          <div className="ratings">{result.ratings.map(item => <article key={item.label}><h3>{item.label}</h3><strong>{item.status}</strong>{item.reason && <p>{item.reason}</p>}<Timeline entries={item.evidence} showDecision /></article>)}</div>
+          <h2>Lini waktu sesi</h2><Timeline entries={result.timeline} showDecision />
           <button className="primary" disabled={busy} onClick={() => void start(current.scenario)}>Ulang kasus</button>
         </> : message ? <button onClick={() => { setMessage(''); void loadDebrief(current.id) }}>Coba muat debrief</button> : <p role="status">Memuat debrief…</p>}
       </section>}
