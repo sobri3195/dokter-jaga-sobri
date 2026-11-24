@@ -1,0 +1,113 @@
+{
+  "minute": 13,
+  "receiver": "primary",
+  "transport": "pending",
+  "assessments": 1,
+  "facts": [
+    {
+      "id": "family",
+      "text": "Pasien fiktif jatuh dari motor sore tadi. Keluarga melaporkan pasien makin mengantuk menjelang tengah malam."
+    },
+    {
+      "id": "response",
+      "text": "Saat dinilai ulang, pasien membuka mata setelah dipanggil berulang."
+    }
+  ],
+  "vitals": [
+    {
+      "pulse": 92,
+      "pressure": "128/82",
+      "breathing": 18,
+      "oxygen": 98,
+      "minute": 0
+    },
+    {
+      "pulse": 104,
+      "pressure": "120/78",
+      "breathing": 22,
+      "oxygen": 96,
+      "minute": 13
+    }
+  ],
+  "handover": {
+    "minute": 8,
+    "destination": "RS utama",
+    "sections": [
+      {
+        "label": "Situasi",
+        "text": "Pasien fiktif jatuh dari motor sore tadi. Keluarga melaporkan pasien makin mengantuk menjelang tengah malam."
+      },
+      {
+        "label": "Latar belakang",
+        "text": "Fasilitas setempat tidak memiliki CT dalam skenario."
+      },
+      {
+        "label": "Penilaian",
+        "text": "Menit 0 · Nadi 92 · TD 128/82 · RR 18 · SpO₂ 98%"
+      },
+      {
+        "label": "Permintaan",
+        "text": "Koordinasi penerimaan pasien dalam simulasi."
+      }
+    ]
+  },
+  "handoverFacts": 1,
+  "changes": [
+    {
+      "id": "reassess",
+      "text": "Saat dinilai ulang, pasien membuka mata setelah dipanggil berulang.",
+      "minute": 13
+    }
+  ],
+  "events": [
+    {
+      "id": "arrival",
+      "minute": 0,
+      "text": "Pasien fiktif jatuh dari motor sore tadi. Keluarga melaporkan pasien makin mengantuk menjelang tengah malam."
+    },
+    {
+      "id": "call",
+      "text": "Delegasikan panggilan ke RS utama",
+      "minute": 0
+    },
+    {
+      "id": "transport",
+      "text": "Persiapan transportasi dimulai.",
+      "minute": 0
+    },
+    {
+      "id": "receiver",
+      "text": "RS utama siap menerima",
+      "minute": 5
+    },
+    {
+      "id": "handover",
+      "text": "Handover simulasi dikirim ke RS utama.",
+      "minute": 8
+    },
+    {
+      "id": "assessment-start",
+      "text": "Penilaian ulang dimulai.",
+      "minute": 8
+    },
+    {
+      "id": "reassess",
+      "text": "Saat dinilai ulang, pasien membuka mata setelah dipanggil berulang.",
+      "minute": 13
+    }
+  ],
+  "queue": [
+    {
+      "kind": "ambulance",
+      "minute": 25,
+      "order": 2
+    },
+    {
+      "kind": "deadline",
+      "minute": 60,
+      "order": 0
+    }
+  ],
+  "next": 4,
+  "outcome": null
+}

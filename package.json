@@ -11,7 +11,8 @@
     "test:integration": "tsx --env-file-if-exists=.env --test tests/integration.test.ts",
     "build": "npm run typecheck && vite build",
     "test:browser": "tsx --test tests/browser.test.ts",
-    "test:deployment": "tsx --test tests/deployment.test.ts"
+    "test:deployment": "tsx --test tests/deployment.test.ts",
+    "db:cleanup": "tsx --env-file-if-exists=.env server/cleanup.ts"
   },
   "dependencies": {
     "pg": "^8.16.0",

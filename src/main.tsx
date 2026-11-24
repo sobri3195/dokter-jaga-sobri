@@ -7,13 +7,22 @@ class RequestError extends Error {
   constructor(readonly status: number, message: string) { super(message) }
 }
 
+class RequestTimeout extends Error {}
+
 async function api<T>(path: string, body?: object): Promise<T> {
-  const response = await fetch('/api' + path, body ? {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-  } : undefined)
-  const value = await response.json()
-  if (!response.ok) throw new RequestError(response.status, value.error)
-  return value
+  const signal = AbortSignal.timeout(15_000)
+  try {
+    const response = await fetch('/api' + path, {
+      signal,
+      ...(body && { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+    })
+    const value = await response.json()
+    if (!response.ok) throw new RequestError(response.status, value.error)
+    return value
+  } catch (error) {
+    if (signal.aborted) throw new RequestTimeout('Permintaan terlalu lama. Coba lagi untuk memulihkan hasil.')
+    throw error
+  }
 }
 
 type Panel = 'Pasien' | 'Aksi' | 'Rujukan'
@@ -131,7 +140,7 @@ function App() {
   }, [finishedId])
 
   function showError(error: unknown) {
-    setMessage(error instanceof RequestError ? error.message : 'Koneksi terputus atau respons belum diterima. Coba lagi.')
+    setMessage(error instanceof RequestError || error instanceof RequestTimeout ? error.message : 'Koneksi terputus atau respons belum diterima. Coba lagi.')
   }
 
   async function run(task: () => Promise<void>) {
@@ -219,9 +228,16 @@ function App() {
     focusHeading()
   }
 
-  const active = sessions.find(s => s.status === 'active')
+  const active = sessions.filter(s => s.status === 'active')
   const completed = sessions.filter(s => s.status === 'finished')
   const latest = current?.handover.latest
+
+  function sessionList(items: SessionInfo[], label: string) {
+    return <ul className="history">{items.map(item => <li key={item.id}>
+      <div><strong>{item.title}</strong><small>{new Date(item.created).toLocaleString('id-ID')}</small></div>
+      <button disabled={busy} onClick={() => void run(() => open(item.id))}>{label}</button>
+    </li>)}</ul>
+  }
 
   return <>
     <header className="top">
@@ -238,7 +254,7 @@ function App() {
           <h1 ref={heading} tabIndex={-1}>Jaga IGD</h1>
           <p>Latihan penilaian ulang dan koordinasi rujukan di fasilitas terbatas.</p>
           {cases[0] && <div className="case-tile"><span>Kasus tersedia</span><h2>{cases[0].title}</h2><p>{cases[0].brief}</p><button className="primary" onClick={() => { setBrief(cases[0]); focusHeading() }}>Mulai kasus <span aria-hidden="true">→</span></button></div>}
-          {active && <button disabled={busy} onClick={() => void run(() => open(active.id))}>Lanjutkan</button>}
+          {active.length > 0 && <><h2>Sesi aktif</h2>{sessionList(active, 'Lanjutkan')}</>}
         </div>
         <div className="hero-art" aria-hidden="true"><div className="art-grid"><div className="pulse">∿</div><div className="art-mark">✚</div></div></div>
       </section>}
@@ -252,7 +268,9 @@ function App() {
       </section>}
       {!current && history && <section className="card">
         <h1 ref={heading} tabIndex={-1}>Riwayat kasus</h1>
-        {completed.length ? <ul className=" history">{completed.map(item => <li key={item.id}><div><strong>{item.title}</strong><small>{new Date(item.created).toLocaleString('id-ID')}</small></div><button disabled={busy} onClick={() => void run(() => open(item.id))}>Lihat hasil</button></li>)}</ul> : <p>Belum ada kasus selesai.</p>}
+        {active.length > 0 && <><h2>Sesi aktif</h2>{sessionList(active, 'Lanjutkan')}</>}
+        <h2>Sesi selesai</h2>
+        {completed.length ? sessionList(completed, 'Lihat hasil') : <p>Belum ada kasus selesai.</p>}
         <button onClick={() => home()}>Kembali ke pembuka</button>
       </section>}
       {current?.status === 'active' && <>

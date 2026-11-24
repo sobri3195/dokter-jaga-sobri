@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { apply, debrief, initial, snapshot } from '../server/engine'
+import { readFileSync } from 'node:fs'
+import { engineFor } from '../server/engine'
+import type { State } from '../server/engine'
+import { apply, debrief, initial, snapshot } from '../server/engine-v1'
 import { scenario } from '../server/scenario'
 
 function play(actions: string[]) {
@@ -88,4 +91,20 @@ test('priority rubric is independent of the primary hospital cutoff', () => {
   }
   assert.equal(state.receiver, 'unavailable')
   assert.equal(debrief(scenarioWithoutPrimaryCapacity, state).ratings[0].status, 'Tercapai')
+})
+
+
+test('engine v1 continues a persisted pre-decision snapshot and preserves its outcome', () => {
+  const engine = engineFor(1)
+  let state = JSON.parse(readFileSync(new URL('./fixtures/session-v1.json', import.meta.url), 'utf8')) as State
+  assert.equal(state.minute, 13)
+  assert.equal(engine.snapshot(scenario, state, 'legacy', 5).handover.changes.length, 1)
+  assert.equal(engine.apply(scenario, state, 'transfer'), null)
+  for (const action of ['handover', 'wait', 'wait', 'wait', 'transfer']) {
+    const next = engine.apply(scenario, state, action)
+    assert.ok(next)
+    state = next
+  }
+  assert.equal(engine.debrief(scenario, state).outcome, scenario.outcomes.primary)
+  assert.throws(() => engineFor(999), /Unsupported simulation engine version/)
 })

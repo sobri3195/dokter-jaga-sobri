@@ -111,3 +111,46 @@ test('360px keyboard, interrupted request, refresh, debrief and repeat', async t
   await button('Lihat hasil').click()
   await page.locator('.outcome').getByText('Transfer ke RS utama selesai.').waitFor()
 })
+
+test('select an older active session and retry a hung mutation with the same ID', async t => {
+  const path = '/usr/bin/chromium'
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH ?? (existsSync(path) ? path : undefined) })
+  t.after(() => browser.close())
+  const page = await browser.newPage({ viewport: { width: 360, height: 800 } })
+  await page.goto(process.env.BROWSER_URL ?? 'http://localhost:5173')
+  const button = (name: string) => page.getByRole('button', { name, exact: true })
+  const ids: (string | null)[] = []
+  for (let i = 0; i < 2; i++) {
+    await button('Mulai kasus').click()
+    await button('Masuk IGD').click()
+    await page.locator('.clock').waitFor()
+    ids.push(await page.evaluate(() => sessionStorage.getItem('jaga-session')))
+    await button('Jaga IGD').click()
+    await button('Lanjutkan').nth(i).waitFor()
+  }
+  await button('Riwayat').click()
+  await button('Lanjutkan').nth(1).click()
+  await page.locator('.clock').waitFor()
+  assert.equal(await page.evaluate(() => sessionStorage.getItem('jaga-session')), ids[0])
+  await button('Aksi').click()
+
+  // Shorten the browser timer while the route withholds the already committed response.
+  await page.evaluate(() => {
+    const timeout = AbortSignal.timeout.bind(AbortSignal)
+    AbortSignal.timeout = delay => timeout(Math.min(delay, 1200))
+  })
+  const attempts: string[] = []
+  await page.route('**/api/sessions/*/actions', async route => {
+    attempts.push(route.request().postDataJSON().commandId)
+    if (attempts.length === 1) {
+      const response = await route.fetch()
+      assert.equal(response.status(), 200)
+    } else await route.continue()
+  })
+  await button('Tunggu 5 menit 5 mnt').click()
+  await page.getByRole('alert').getByText(/Permintaan terlalu lama/).waitFor()
+  await button('Coba ulang perintah').click()
+  await page.locator('.clock').getByText('+05 mnt', { exact: true }).waitFor()
+  assert.equal(attempts.length, 2)
+  assert.equal(attempts[0], attempts[1])
+})
