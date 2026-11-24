@@ -8,6 +8,7 @@ class RequestError extends Error {
 }
 
 class RequestTimeout extends Error {}
+class GuestBootstrapUnavailable extends Error {}
 
 async function api<T>(path: string, body?: object): Promise<T> {
   const signal = AbortSignal.timeout(15_000)
@@ -21,6 +22,22 @@ async function api<T>(path: string, body?: object): Promise<T> {
     return value
   } catch (error) {
     if (signal.aborted) throw new RequestTimeout('Permintaan terlalu lama. Coba lagi untuk memulihkan hasil.')
+    throw error
+  }
+}
+
+async function establishGuest() {
+  if (!navigator.locks) {
+    throw new GuestBootstrapUnavailable('Gunakan browser modern melalui HTTPS atau localhost untuk memulai sesi.')
+  }
+  const signal = AbortSignal.timeout(15_000)
+  try {
+    // The next tab must wait until this response has applied its HttpOnly cookie.
+    await navigator.locks.request('jaga-guest-bootstrap', { signal }, () => api('/guests', {}))
+  } catch (error) {
+    if (signal.aborted && error === signal.reason) {
+      throw new RequestTimeout('Penyiapan identitas tamu terlalu lama. Coba lagi.')
+    }
     throw error
   }
 }
@@ -174,7 +191,7 @@ function App() {
   }, [finishedId])
 
   function showError(error: unknown) {
-    setMessage(error instanceof RequestError || error instanceof RequestTimeout ? error.message : 'Koneksi terputus atau respons belum diterima. Coba lagi.')
+    setMessage(error instanceof RequestError || error instanceof RequestTimeout || error instanceof GuestBootstrapUnavailable ? error.message : 'Koneksi terputus atau respons belum diterima. Coba lagi.')
   }
 
   async function run(task: () => Promise<void>) {
@@ -188,11 +205,12 @@ function App() {
 
   async function createSession(creation: Creation) {
     sessionStorage.setItem(creationKey, JSON.stringify(creation))
+    await establishGuest()
     let state: Snapshot
     try {
       state = await api<Snapshot>('/sessions', creation)
     } catch (error) {
-      if (error instanceof RequestError && error.status < 500) sessionStorage.removeItem(creationKey)
+      if (error instanceof RequestError && error.status < 500 && error.status !== 401) sessionStorage.removeItem(creationKey)
       throw error
     }
     enterSession(state)

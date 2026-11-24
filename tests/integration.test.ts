@@ -31,10 +31,22 @@ test('Postgres transactions and session API', async t => {
   assert.equal(cases.data[0].id, scenario.info.id)
   assert.doesNotMatch(JSON.stringify(cases.data), /primaryCutoff|reassessments|outcomes/)
   const list = await req('/sessions')
-  cookie = list.headers.get('set-cookie')!.split(';')[0]
-  assert.match(list.headers.get('set-cookie')!, /HttpOnly; SameSite=Lax/)
+  assert.deepEqual(list.data, [])
+  assert.equal(list.headers.get('set-cookie'), null)
   assert.equal(list.headers.get('cache-control'), 'private, no-store')
   const input = { caseId: scenario.info.id, version }
+  const denied = await req('/sessions', input)
+  assert.equal(denied.status, 401)
+  assert.equal(denied.headers.get('set-cookie'), null)
+  assert.equal((await req('/guests', {}, '', 'https://example.invalid')).status, 403)
+  const identity = await req('/guests', {})
+  assert.equal(identity.status, 200)
+  assert.deepEqual(identity.data, {})
+  assert.match(identity.headers.get('set-cookie')!, /HttpOnly; SameSite=Lax/)
+  cookie = identity.headers.get('set-cookie')!.split(';')[0]
+  const identified = await req('/guests', {})
+  assert.equal(identified.status, 200)
+  assert.equal(identified.headers.get('set-cookie'), null)
   assert.equal((await req('/sessions', input, cookie, 'https://example.invalid')).status, 403)
   const creation = { ...input, creationId: randomUUID() }
   const [created, repeatedCreate] = await Promise.all([req('/sessions', creation), req('/sessions', creation)])
@@ -43,7 +55,9 @@ test('Postgres transactions and session API', async t => {
   assert.deepEqual(repeatedCreate.data, created.data)
   assert.equal((await req('/sessions')).data.length, 1)
   assert.equal((await req('/sessions', { ...creation, version: version + 1 })).status, 409)
-  const anotherGuest = await req('/sessions', creation, '')
+  const separateIdentity = await req('/guests', {}, '')
+  assert.equal(separateIdentity.status, 200)
+  const anotherGuest = await req('/sessions', creation, separateIdentity.headers.get('set-cookie')!.split(';')[0])
   assert.equal(anotherGuest.status, 201)
   assert.notEqual(anotherGuest.data.id, created.data.id)
   const path = '/sessions/' + created.data.id
@@ -121,9 +135,12 @@ test('alternate transfer and unresolved deadline through the API', async t => {
   const base = 'http://127.0.0.1:' + (server.address() as AddressInfo).port + '/api'
   t.after(() => server.close())
   const origin = process.env.APP_ORIGIN ?? 'http://localhost:5173'
-  const list = await fetch(base + '/sessions')
-  const cookie = list.headers.get('set-cookie')!.split(';')[0]
-  await list.json()
+  const bootstrap = await fetch(base + '/guests', {
+    method: 'POST', headers: { origin, 'Content-Type': 'application/json' }, body: '{}',
+  })
+  assert.equal(bootstrap.status, 200)
+  const cookie = bootstrap.headers.get('set-cookie')!.split(';')[0]
+  await bootstrap.json()
   const headers = { cookie, origin, 'Content-Type': 'application/json' }
 
   for (const [actions, outcome] of [
@@ -158,7 +175,14 @@ test('admission throttling, migration ledger, and bounded retention', async t =>
   await pool().query(`INSERT INTO guest_admissions SELECT generate_series($2::bigint,$3::bigint),$1,30
     ON CONFLICT (bucket, source_hash) DO UPDATE SET count=30`, [source, bucket, bucket + 1])
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/sessions`)
+    const list = await fetch(`http://127.0.0.1:${port}/api/sessions`)
+    assert.equal(list.status, 200)
+    assert.equal(list.headers.get('set-cookie'), null)
+    assert.deepEqual(await list.json(), [])
+    const response = await fetch(`http://127.0.0.1:${port}/api/guests`, {
+      method: 'POST', headers: { origin: process.env.APP_ORIGIN ?? 'http://localhost:5173', 'Content-Type': 'application/json' },
+      body: '{}',
+    })
     assert.equal(response.status, 429)
     assert.equal(response.headers.get('retry-after'), '60')
     assert.equal(response.headers.get('set-cookie'), null)

@@ -17,7 +17,7 @@ npm run db:setup
 npm run dev
 ```
 
-Buka `http://localhost:5173`. Vite meneruskan permintaan `/api` ke server pengembangan pada port 3001. Isi `APP_ORIGIN` dengan origin halaman yang tepat jika mengubah alamat. Simpan `DATABASE_URL` di sisi server. `.env` diabaikan oleh Git.
+Buka `http://localhost:5173` dengan browser yang mendukung Web Locks. Deployment web memerlukan HTTPS. Vite meneruskan permintaan `/api` ke server pengembangan pada port 3001. Isi `APP_ORIGIN` dengan origin halaman yang tepat jika mengubah alamat. Simpan `DATABASE_URL` di sisi server. `.env` diabaikan oleh Git.
 
 `npm run db:setup` menjalankan migrasi di `db/` dan menambahkan versi kasus dari `server/scenario.ts`. Jalankan kembali untuk setup yang sama. Untuk mengubah isi skenario yang sudah diterbitkan, naikkan nomor versi. Sesi lama tetap merujuk ke versi awalnya. Sesi yang dipilih melalui **Ulang kasus** memakai versi kasus yang diulang. Jika respons saat memulai atau mengulang kasus terputus, muat ulang tab atau coba lagi untuk memulihkan permintaan yang sama.
 
@@ -29,6 +29,8 @@ Buka `http://localhost:5173`. Vite meneruskan permintaan `/api` ke server pengem
 4. Nilai ulang pasien sekali lagi. Kembali ke **Rujukan**, baca temuan baru, dan pilih **Perbarui handover**.
 5. Pilih **Tunggu 5 menit** sampai ambulans siap, lalu selesaikan transfer. Baca debrief dan coba **Ulang kasus**.
 6. Untuk jalur alternatif, mulai sesi baru, siapkan transportasi, tunggu dua kali, telepon RS utama, lalu nilai ulang. Hubungi RS alternatif setelah RS utama menyatakan belum siap. Tunggu sampai RS dan ambulans siap, kirim handover, lalu selesaikan transfer. Untuk luaran hambatan, tunggu sampai skenario berakhir.
+
+Daftar sesi dapat dimuat tanpa menerbitkan cookie. Sebelum membuat sesi, browser menyiapkan identitas melalui `POST /api/guests` dengan JSON `{}` dan origin yang sama, lalu memakai cookie yang diterbitkan untuk `POST /api/sessions`. Browser mengunci proses penyiapan per origin agar tab lain menunggu sebelum menerbitkan cookie.
 
 ## Verifikasi
 

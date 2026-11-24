@@ -39,7 +39,7 @@ jobs:
       - run: npm run lint && npm run typecheck && npm test && npm run build
       - run: npm run db:setup && npm run test:integration
       - run: npx playwright-core install --with-deps chromium
-      - name: Browser smoke test
+      - name: API and browser smoke tests
         run: |
           npm run dev > /tmp/jaga-dev.log 2>&1 &
           server_pid=$!
@@ -48,4 +48,5 @@ jobs:
             cat /tmp/jaga-dev.log
             exit 1
           fi
+          SMOKE_URL=http://localhost:5173 npm run test:deployment
           npm run test:browser
