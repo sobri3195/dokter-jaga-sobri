@@ -14,7 +14,7 @@ body { margin: 0; }
 button { font: inherit; font-weight: 650; min-height: 44px; border: 1px solid #abc3b8; border-radius: 8px; color: var(--teal); background: #fff; padding: .65rem .95rem; cursor: pointer; }
 button:hover:not(:disabled) { background: var(--mint); }
 button:disabled { cursor: wait; opacity: .62; }
-button:focus-visible, h1:focus-visible { outline: 3px solid #96550a; outline-offset: 3px; }
+button:focus-visible, h1:focus-visible, h2:focus-visible, .vitals:focus-visible, .alert:focus { outline: 3px solid #96550a; outline-offset: 3px; }
 h1, h2, h3, p { margin: 0 0 .75rem; }
 h1 { font-size: clamp(1.65rem, 4vw, 2.7rem); line-height: 1.08; letter-spacing: -.045em; }
 h2 { font-size: 1.12rem; }
@@ -55,7 +55,7 @@ main { max-width: 1100px; margin: 1.9rem auto; padding: 0 1.25rem 2rem; }
 .muted { color: var(--muted); }
 .alert { background: #fff2d9; color: #631f18; padding: .8rem; border-radius: 8px; margin-bottom: .8rem; }
 .actions { display: grid; gap: .55rem; }
-.actions button { display: flex; gap: .45rem; justify-content: space-between; text-align: left; align-items: center; }
+.actions button { display: flex; flex-wrap: wrap; gap: .45rem; justify-content: space-between; text-align: left; align-items: center; }
 small { white-space: nowrap; color: var(--muted); }
 .retry { margin: 1rem 0 0; }
 .timeline, .history { padding: 0; list-style: none; }
@@ -72,6 +72,9 @@ dd { margin: 0 0 .5rem; }
 .outcome { padding: .8rem; border-radius: 8px; background: var(--mint); font-weight: 700; }
 .history li { display: flex; align-items: center; gap: .5rem; justify-content: space-between; padding: .7rem 0; border-top: 1px solid var(--line); }
 .history small { display: block; }
+caption { text-align: left; font-weight: 700; margin-bottom: .5rem; }
+.comparison th, .comparison td { white-space: normal; }
+.comparison { min-width: 20rem; }
 table { border-collapse: collapse; width: 100%; text-align: left; font-variant-numeric: tabular-nums; }
 th, td { padding: .45rem .25rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .vitals { overflow-x: auto; margin-bottom: .75rem; }
@@ -82,4 +85,12 @@ th, td { padding: .45rem .25rem; border-bottom: 1px solid var(--line); white-spa
   .hero-art { min-height: 150px; }
   .tabs { position: sticky; top: 0; z-index: 1; }
   .summary h1 { font-size: 1.45rem; }
+}
+
+@media (max-width: 400px) {
+  .top-inner, .tabs, .history li { flex-wrap: wrap; }
+  .tabs button { min-width: max-content; }
+  .summary { flex-direction: column; }
+  .clock { text-align: left; }
+  .timeline > li { grid-template-columns: minmax(0, 1fr); }
 }

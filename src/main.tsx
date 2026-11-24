@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { CaseInfo, Debrief, Entry, SessionInfo, Snapshot } from './contracts'
+import type { CaseInfo, Debrief, Entry, SessionInfo, Snapshot, Vital } from './contracts'
 import './style.css'
 
 class RequestError extends Error {
@@ -55,6 +55,32 @@ function Timeline({ entries, showDecision = false }: { entries: Entry[]; showDec
   </li>)}</ol>
 }
 
+function VitalComparison({ before, after }: { before: Vital; after: Vital }) {
+  const [beforeSystolic, beforeDiastolic] = before.pressure.split('/').map(Number)
+  const [afterSystolic, afterDiastolic] = after.pressure.split('/').map(Number)
+  const rows = [
+    { label: 'Nadi (kali/menit)', previous: before.pulse, current: after.pulse },
+    { label: 'Tekanan sistolik (mmHg)', previous: beforeSystolic, current: afterSystolic },
+    { label: 'Tekanan diastolik (mmHg)', previous: beforeDiastolic, current: afterDiastolic },
+    { label: 'Pernapasan (kali/menit)', previous: before.breathing, current: after.breathing },
+    { label: 'Saturasi oksigen (%)', previous: before.oxygen, current: after.oxygen, deltaUnit: ' poin persentase' },
+  ]
+  return <div className="vitals" role="region" aria-label="Perbandingan tanda vital" tabIndex={0}>
+    <table className="comparison">
+      <caption>Selisih tanda vital sejak handover</caption>
+      <thead><tr><th scope="col">Tanda vital</th><th scope="col">Terkirim (mnt {before.minute})</th><th scope="col">Terbaru (mnt {after.minute})</th><th scope="col">Selisih</th></tr></thead>
+      <tbody>{rows.map(({ label, previous, current, deltaUnit }) => {
+        const delta = current - previous
+        const change = !Number.isFinite(delta) ? 'Tidak tersedia'
+          : delta ? `${delta > 0 ? 'Naik' : 'Turun'} ${Math.abs(delta)}${deltaUnit ?? ''}` : 'Tetap'
+        return <tr key={label}><th scope="row">{label}</th>
+          <td>{Number.isFinite(previous) ? previous : '—'}</td><td>{Number.isFinite(current) ? current : '—'}</td>
+          <td>{change}</td></tr>
+      })}</tbody>
+    </table>
+  </div>
+}
+
 function App() {
   const [cases, setCases] = useState<CaseInfo[]>([])
   const [sessions, setSessions] = useState<SessionInfo[]>([])
@@ -71,6 +97,11 @@ function App() {
   const [loading, setLoading] = useState(true)
   const lock = useRef(false)
   const heading = useRef<HTMLHeadingElement>(null)
+  const alert = useRef<HTMLDivElement>(null)
+  const panelHeading = useRef<HTMLHeadingElement>(null)
+  useEffect(() => {
+    if (message) alert.current?.focus()
+  }, [message])
   const focusHeading = () => requestAnimationFrame(() => heading.current?.focus())
 
   async function list() {
@@ -128,7 +159,10 @@ function App() {
   async function loadDebrief(id: string, signal?: AbortSignal) {
     try {
       const data = await api<Debrief>(`/sessions/${id}/debrief`)
-      if (!signal?.aborted) setResult(data)
+      if (!signal?.aborted) {
+        setResult(data)
+        return true
+      }
     } catch (error) { if (!signal?.aborted) showError(error) }
   }
 
@@ -178,6 +212,7 @@ function App() {
       setNeedsSync(false)
       setNotice('Kondisi sesi terbaru sudah dimuat.')
       if (state.status === 'finished') focusHeading()
+      else requestAnimationFrame(() => panelHeading.current?.focus())
     } catch {
       setMessage('Sesi berubah, tetapi kondisi terbaru belum dapat dimuat. Muat ulang kondisi sesi sebelum memilih aksi.')
     }
@@ -203,6 +238,7 @@ function App() {
           setNotice(state.timeline.slice(previous.timeline.length).map(entry => entry.text).join(' ') || `Waktu simulasi ${clock(state.minute)}.`)
           if (state.status === 'finished') focusHeading()
         }
+        if (state.status === 'active' && !actionId) requestAnimationFrame(() => panelHeading.current?.focus())
       } catch (error) {
         if (error instanceof RequestError && error.status < 500) {
           clear()
@@ -231,6 +267,15 @@ function App() {
   const active = sessions.filter(s => s.status === 'active')
   const completed = sessions.filter(s => s.status === 'finished')
   const latest = current?.handover.latest
+  const recentVital = current?.vitals.at(-1)
+  const sentVital = latest && current?.vitals.slice().reverse().find(vital => vital.minute <= latest.minute)
+  const debriefRetry = current?.status === 'finished' && !result && <button disabled={busy}
+    onClick={() => void run(async () => {
+      if (await loadDebrief(current.id)) focusHeading()
+    })}>Coba muat debrief</button>
+  const retry = current?.status === 'active' && (needsSync
+    ? <button disabled={busy} onClick={() => void run(() => syncSession(current.id))}>Muat kondisi terbaru</button>
+    : pending ? <button disabled={busy} onClick={() => void act()}>Coba ulang perintah</button> : null)
 
   function sessionList(items: SessionInfo[], label: string) {
     return <ul className="history">{items.map(item => <li key={item.id}>
@@ -247,7 +292,9 @@ function App() {
       </div>
     </header>
     <main>
-      {message && <div className="alert" role="alert">{message} {!current && <button onClick={() => void initialize()}>Muat ulang</button>}</div>}
+      {message && <div className="alert" role="alert" ref={alert} tabIndex={-1}>
+        <p>{message}</p>{!current ? <button onClick={() => void initialize()}>Muat ulang</button> : retry || debriefRetry}
+      </div>}
       {loading && <p role="status">Memuat simulasi…</p>}
       {!loading && !current && !brief && !history && <section className="hero">
         <div className="hero-copy"><p className="eyebrow">SIMULASI DOKTER JAGA</p>
@@ -281,23 +328,25 @@ function App() {
         <nav className="tabs" aria-label="Panel kasus">{panels.map(name => <button key={name} aria-pressed={name === panel} onClick={() => setPanel(name)}>{name}</button>)}</nav>
         <div className="workspace">
           <section className="card">
-            <h2>{panel}</h2>
+            <h2 ref={panelHeading} tabIndex={-1}>{panel}</h2>
             {panel === 'Pasien' && <>
               <h3>Laporan singkat dan temuan</h3><ul>{current.facts.map(fact => <li key={fact.id}>{fact.text}</li>)}</ul>
               <h3>Tren tanda vital simulasi</h3>
-              <div className="vitals"><table><thead><tr>{['Menit', 'Nadi', 'TD', 'RR', 'SpO₂'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{current.vitals.map(v => <tr key={v.minute}><td>{v.minute}</td><td>{v.pulse}</td><td>{v.pressure}</td><td>{v.breathing}</td><td>{v.oxygen}%</td></tr>)}</tbody></table></div>
+              <div className="vitals" role="region" aria-label="Tren tanda vital simulasi" tabIndex={0}><table><thead><tr>{['Menit', 'Nadi', 'TD', 'RR', 'SpO₂'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{current.vitals.map(v => <tr key={v.minute}><td>{v.minute}</td><td>{v.pulse}</td><td>{v.pressure}</td><td>{v.breathing}</td><td>{v.oxygen}%</td></tr>)}</tbody></table></div>
               <p className="muted">Ambang dan aturan klinis menunggu telaah.</p>
             </>}
-            {panel === 'Aksi' && <div className="actions">{current.options.map(option => <button key={option.id} disabled={busy || !!pending || needsSync} onClick={() => void act(option.id)}>{option.label}<small>{option.duration ? `${option.duration} mnt` : '0 mnt'}</small></button>)}</div>}
+            {panel === 'Aksi' && <div className="actions">{current.options.map(option => <button key={option.id} disabled={busy || !!pending || needsSync} onClick={() => void act(option.id)}>{option.label}{option.resultInMinutes !== undefined
+              ? <small>Hasil dalam {option.resultInMinutes} menit</small>
+              : option.id !== 'wait' && option.duration > 0 && <small>{option.duration} mnt</small>}</button>)}</div>}
             {panel === 'Rujukan' && <>
               <dl className="referral"><div><dt>RS penerima</dt><dd>{current.receiver}</dd></div><div><dt>Transportasi</dt><dd>{current.transport}</dd></div></dl>
               <h3>Handover terakhir</h3>
               {latest ? <><p>{latest.destination} · {clock(latest.minute)}</p><dl>{latest.sections.map(section => <div key={section.label}><dt>{section.label}</dt><dd>{section.text}</dd></div>)}</dl></> : <p>Belum dikirim.</p>}
+              {sentVital && recentVital && sentVital.minute !== recentVital.minute && <VitalComparison before={sentVital} after={recentVital} />}
               {current.handover.changes.length > 0 && <><h3>Temuan sejak handover terakhir</h3><Timeline entries={current.handover.changes}/></>}
               {current.options.some(option => option.id === 'handover') && <button className="primary" disabled={busy || !!pending || needsSync} onClick={() => void act('handover')}>{latest ? 'Perbarui handover' : 'Kirim handover simulasi'}</button>}
             </>}
-            {needsSync && <p className="retry"><button disabled={busy} onClick={() => void run(() => syncSession(current.id))}>Muat kondisi terbaru</button></p>}
-            {pending && <p className="retry"><button disabled={busy} onClick={() => void act()}>Coba ulang perintah</button></p>}
+            {!message && retry && <p className="retry">{retry}</p>}
           </section>
           <aside className="card">
             <h2>Tugas berjalan</h2>
@@ -314,7 +363,7 @@ function App() {
           <div className="ratings">{result.ratings.map(item => <article key={item.label}><h3>{item.label}</h3><strong>{item.status}</strong>{item.reason && <p>{item.reason}</p>}<Timeline entries={item.evidence} showDecision /></article>)}</div>
           <h2>Lini waktu sesi</h2><Timeline entries={result.timeline} showDecision />
           <button className="primary" disabled={busy} onClick={() => void start(current.scenario)}>Ulang kasus</button>
-        </> : message ? <button onClick={() => { setMessage(''); void loadDebrief(current.id) }}>Coba muat debrief</button> : <p role="status">Memuat debrief…</p>}
+        </> : !message && <p role="status">Memuat debrief…</p>}
       </section>}
     </main>
   </>

@@ -1,4 +1,4 @@
-export interface Action { id: string; label: string; duration: number }
+export interface Action { id: string; label: string; duration: number; resultInMinutes?: number }
 export interface Fact { id: string; text: string }
 export interface Vital { minute: number; pulse: number; pressure: string; breathing: number; oxygen: number }
 export interface Entry {

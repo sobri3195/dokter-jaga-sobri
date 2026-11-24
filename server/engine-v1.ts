@@ -158,11 +158,14 @@ export function apply(d: Scenario, previous: State, id: string): State | null {
 export function snapshot(d: Scenario, s: State, id: string, revision: number): Snapshot {
   return {
     id, revision, scenario: d.info, minute: s.minute, status: s.outcome ? 'finished' : 'active',
-    condition: s.assessments > 0 ? 'Respons melambat saat dinilai ulang' : 'Keluarga melaporkan pasien makin mengantuk',
+    condition: s.assessments > 0 ? s.facts.at(-1)!.text : 'Keluarga melaporkan pasien makin mengantuk',
     facts: s.facts, vitals: s.vitals, receiver: receiverText[s.receiver], transport: transportText[s.transport],
     tasks: s.outcome ? [] : s.queue.filter(e => taskText[e.kind]).map(e => ({ id: e.kind, minute: e.minute, text: taskText[e.kind] })),
     timeline: s.events,
-    options: options(d, s).map(({ id, label, duration }) => ({ id, label, duration })),
+    options: options(d, s).map(({ id, label, duration }) => ({
+      id, label, duration,
+      ...((id === 'primary' || id === 'alternate') && { resultInMinutes: d.events[id].delay }),
+    })),
     handover: { latest: s.handover, changes: s.changes },
   }
 }
