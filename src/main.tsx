@@ -100,7 +100,8 @@ function VitalComparison({ before, after }: { before: Vital; after: Vital }) {
 
 function App() {
   const [cases, setCases] = useState<CaseInfo[]>([])
-  const [sessions, setSessions] = useState<SessionInfo[]>([])
+  const [sessions, setSessions] = useState<SessionInfo[]>()
+  const [listStatus, setListStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [current, setCurrent] = useState<Snapshot>()
   const [brief, setBrief] = useState<CaseInfo>()
   const [result, setResult] = useState<Debrief>()
@@ -122,8 +123,14 @@ function App() {
   const focusHeading = () => requestAnimationFrame(() => heading.current?.focus())
 
   async function list() {
-    const data = await api<SessionInfo[]>('/sessions')
-    setSessions(data)
+    setListStatus('loading')
+    try {
+      setSessions(await api<SessionInfo[]>('/sessions'))
+      setListStatus('ready')
+    } catch (error) {
+      setListStatus('error')
+      throw error
+    }
   }
 
   function accept(state: Snapshot) {
@@ -282,8 +289,8 @@ function App() {
     focusHeading()
   }
 
-  const active = sessions.filter(s => s.status === 'active')
-  const completed = sessions.filter(s => s.status === 'finished')
+  const active = sessions?.filter(s => s.status === 'active') ?? []
+  const completed = sessions?.filter(s => s.status === 'finished') ?? []
   const latest = current?.handover.latest
   const recentVital = current?.vitals.at(-1)
   const sentVital = latest && current?.vitals.slice().reverse().find(vital => vital.minute <= latest.minute)
@@ -304,14 +311,16 @@ function App() {
 
   return <>
     <header className="top">
-      <div className="top-inner"><button className="brand" disabled={busy} onClick={() => home()}><span aria-hidden="true">✚</span> Jaga IGD</button>
+      <div className="top-inner"><button className="brand" disabled={busy || loading} onClick={() => home()}><span aria-hidden="true">✚</span> Jaga IGD</button>
         <span className="draft">Draf simulasi</span>
-        <button className="quiet" disabled={busy} onClick={() => home(true)}>Riwayat</button>
+        <button className="quiet" disabled={busy || loading} onClick={() => home(true)}>Riwayat</button>
       </div>
     </header>
     <main>
       {message && <div className="alert" role="alert" ref={alert} tabIndex={-1}>
-        <p>{message}</p>{!current ? <button onClick={() => void initialize()}>Muat ulang</button> : retry || debriefRetry}
+        <p>{message}</p>{!current ? history && listStatus === 'error'
+          ? <button onClick={() => void run(list)}>Coba muat riwayat</button>
+          : <button onClick={() => void initialize()}>Muat ulang</button> : retry || debriefRetry}
       </div>}
       {loading && <p role="status">Memuat simulasi…</p>}
       {!loading && !current && !brief && !history && <section className="hero">
@@ -333,10 +342,16 @@ function App() {
       </section>}
       {!current && history && <section className="card">
         <h1 ref={heading} tabIndex={-1}>Riwayat kasus</h1>
+        <p className="muted">Akses riwayat bergantung pada cookie browser ini. Masa akses diperbarui hingga 90 hari saat memulai kasus.</p>
+        {listStatus === 'loading' && <p role="status">Memuat riwayat…</p>}
+        {listStatus === 'error' && <p>{active.length || completed.length
+          ? 'Riwayat gagal dimuat. Daftar di bawah adalah hasil terakhir yang tersedia.'
+          : 'Riwayat gagal dimuat.'}</p>}
         {active.length > 0 && <><h2>Sesi aktif</h2>{sessionList(active, 'Lanjutkan')}</>}
-        <h2>Sesi selesai</h2>
-        {completed.length ? sessionList(completed, 'Lihat hasil') : <p>Belum ada kasus selesai.</p>}
-        <button onClick={() => home()}>Kembali ke pembuka</button>
+        {(completed.length > 0 || listStatus === 'ready') && <><h2>Sesi selesai</h2>
+          {completed.length ? sessionList(completed, 'Lihat hasil') : <p>Belum ada kasus selesai.</p>}
+        </>}
+        <button disabled={busy} onClick={() => home()}>Kembali ke pembuka</button>
       </section>}
       {current?.status === 'active' && <>
         <section className="summary">
@@ -354,7 +369,7 @@ function App() {
               <p className="muted">Ambang dan aturan klinis menunggu telaah.</p>
             </>}
             {panel === 'Aksi' && <div className="actions">{current.options.map(option => <button key={option.id} disabled={busy || !!pending || needsSync} onClick={() => void act(option.id)}>{option.label}{option.resultInMinutes !== undefined
-              ? <small>Hasil dalam {option.resultInMinutes} menit</small>
+              ? <small>{option.resultAfterDeadline ? 'Hasil melewati akhir skenario' : `Hasil dalam ${option.resultInMinutes} menit`}</small>
               : option.id !== 'wait' && option.duration > 0 && <small>{option.duration} mnt</small>}</button>)}</div>}
             {panel === 'Rujukan' && <>
               <dl className="referral"><div><dt>RS penerima</dt><dd>{current.receiver}</dd></div><div><dt>Transportasi</dt><dd>{current.transport}</dd></div></dl>

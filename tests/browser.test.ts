@@ -281,3 +281,60 @@ test('simultaneous first session creation waits for one guest cookie', { timeout
     release.resolve(undefined)
   }
 })
+
+test('history distinguishes loading, unavailable, cached, and confirmed results', { timeout: 30_000 }, async t => {
+  const systemChromium = '/usr/bin/chromium'
+  const browser = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH ?? (existsSync(systemChromium) ? systemChromium : undefined),
+  })
+  t.after(() => browser.close())
+  const base = new URL(process.env.BROWSER_URL ?? 'http://localhost:5173').origin
+  const page = await browser.newPage()
+  await page.goto(base)
+  await page.getByRole('button', { name: 'Mulai kasus' }).waitFor()
+
+  const post = (path: string, data: object) => page.request.post(base + '/api' + path, {
+    data, headers: { origin: base },
+  })
+  assert.equal((await post('/guests', {})).status(), 200)
+  const [scenario] = await (await page.request.get(base + '/api/cases')).json()
+  const created = await post('/sessions', { caseId: scenario.id, version: scenario.version, creationId: crypto.randomUUID() })
+  assert.equal(created.status(), 201)
+  let state = await created.json()
+  for (let i = 0; i < 12; i++) {
+    const result = await post('/sessions/' + state.id + '/actions', {
+      actionId: 'wait', commandId: crypto.randomUUID(), expectedRevision: state.revision,
+    })
+    assert.equal(result.status(), 200)
+    state = await result.json()
+  }
+  assert.equal(state.status, 'finished')
+
+  const release = deferred<void>()
+  await page.route(base + '/api/sessions', async route => {
+    await release.promise
+    await route.abort()
+  }, { times: 1 })
+  const history = page.getByRole('button', { name: 'Riwayat', exact: true })
+  const empty = page.getByText('Belum ada kasus selesai.', { exact: true })
+  try {
+    await history.click()
+    await page.getByRole('status').getByText('Memuat riwayat…').waitFor()
+    assert.equal(await empty.count(), 0)
+    release.resolve(undefined)
+    await page.getByText('Riwayat gagal dimuat.', { exact: true }).waitFor()
+    assert.equal(await empty.count(), 0)
+    await page.getByRole('button', { name: 'Coba muat riwayat' }).click()
+    await page.getByRole('button', { name: 'Lihat hasil' }).waitFor()
+
+    await page.getByRole('button', { name: 'Kembali ke pembuka' }).click()
+    await page.getByRole('button', { name: 'Mulai kasus' }).waitFor()
+    await page.route(base + '/api/sessions', route => route.abort(), { times: 1 })
+    await history.click()
+    await page.getByText(/Daftar di bawah adalah hasil terakhir/).waitFor()
+    await page.getByRole('button', { name: 'Lihat hasil' }).waitFor()
+    assert.equal(await empty.count(), 0)
+  } finally {
+    release.resolve(undefined)
+  }
+})

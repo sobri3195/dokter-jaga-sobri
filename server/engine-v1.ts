@@ -92,6 +92,11 @@ function advance(d: Scenario, s: State, target: number) {
         break
       }
       case 'deadline':
+        for (const task of s.queue) {
+          const label = taskText[task.kind]
+          if (label) record(s, 'task-interrupted', `${label} belum selesai saat sesi berakhir (dijadwalkan menit ${task.minute}).`)
+        }
+        s.queue = []
         s.outcome = d.outcomes.deadline
         record(s, 'outcome', s.outcome)
         break
@@ -160,11 +165,17 @@ export function snapshot(d: Scenario, s: State, id: string, revision: number): S
     id, revision, scenario: d.info, minute: s.minute, status: s.outcome ? 'finished' : 'active',
     condition: s.assessments > 0 ? s.facts.at(-1)!.text : 'Keluarga melaporkan pasien makin mengantuk',
     facts: s.facts, vitals: s.vitals, receiver: receiverText[s.receiver], transport: transportText[s.transport],
-    tasks: s.outcome ? [] : s.queue.filter(e => taskText[e.kind]).map(e => ({ id: e.kind, minute: e.minute, text: taskText[e.kind] })),
+    tasks: s.outcome ? [] : s.queue.filter(e => taskText[e.kind]).map(e => ({
+      id: e.kind, minute: e.minute,
+      text: taskText[e.kind] + (e.minute > d.deadline ? ' · hasil melewati akhir skenario' : ''),
+    })),
     timeline: s.events,
     options: options(d, s).map(({ id, label, duration }) => ({
       id, label, duration,
-      ...((id === 'primary' || id === 'alternate') && { resultInMinutes: d.events[id].delay }),
+      ...((id === 'primary' || id === 'alternate') && {
+        resultInMinutes: d.events[id].delay,
+        ...(s.minute + d.events[id].delay > d.deadline && { resultAfterDeadline: true }),
+      }),
     })),
     handover: { latest: s.handover, changes: s.changes },
   }
@@ -178,7 +189,7 @@ export function debrief(d: Scenario, s: State): Debrief {
   const prioritySteps = s.events.filter(e => e.id === 'call' || e.id === 'assessment-start')
   const firstPriority = prioritySteps[0]
   const timely = firstPriority !== undefined && firstPriority.minute <= priorityWindow
-  const coordination = s.events.filter(e => ['call', 'receiver', 'transport', 'ambulance'].includes(e.id))
+  const coordination = s.events.filter(e => ['call', 'receiver', 'transport', 'ambulance', 'task-interrupted'].includes(e.id))
   const ready = receiverReady(s) && s.transport === 'ready'
   const lastSend = s.events.map(e => e.id).lastIndexOf('handover')
   const handoverEvidence = lastSend < 0 ? s.events.filter(e => e.id === 'receiver')
@@ -207,7 +218,7 @@ export function debrief(d: Scenario, s: State): Debrief {
       },
       {
         label: 'Koordinasi', status: ready ? 'Tercapai' : coordination.length ? 'Sebagian' : 'Terlewat',
-        reason: `Rubrik meminta konfirmasi RS dan kesiapan transportasi. Saat sesi berakhir: ${receiverText[s.receiver]}; ${transportText[s.transport]}.`,
+        reason: `Rubrik meminta konfirmasi RS dan kesiapan transportasi. Saat sesi berakhir: ${s.receiver === 'calling' ? 'Panggilan belum selesai' : receiverText[s.receiver]}; ${s.transport === 'pending' ? 'Ambulans belum siap' : transportText[s.transport]}.`,
         evidence: evidence(coordination, ['primary', 'alternate', 'transport']),
       },
       {

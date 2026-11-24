@@ -42,11 +42,11 @@ test('Postgres transactions and session API', async t => {
   const identity = await req('/guests', {})
   assert.equal(identity.status, 200)
   assert.deepEqual(identity.data, {})
-  assert.match(identity.headers.get('set-cookie')!, /HttpOnly; SameSite=Lax/)
+  assert.match(identity.headers.get('set-cookie')!, /HttpOnly; SameSite=Lax; Max-Age=7776000/)
   cookie = identity.headers.get('set-cookie')!.split(';')[0]
   const identified = await req('/guests', {})
   assert.equal(identified.status, 200)
-  assert.equal(identified.headers.get('set-cookie'), null)
+  assert.equal(identified.headers.get('set-cookie'), identity.headers.get('set-cookie'))
   assert.equal((await req('/sessions', input, cookie, 'https://example.invalid')).status, 403)
   const creation = { ...input, creationId: randomUUID() }
   const [created, repeatedCreate] = await Promise.all([req('/sessions', creation), req('/sessions', creation)])
@@ -145,7 +145,7 @@ test('alternate transfer and unresolved deadline through the API', async t => {
 
   for (const [actions, outcome] of [
     [['transport', 'wait', 'wait', 'primary', 'reassess', 'alternate', 'wait', 'wait', 'handover', 'transfer'], scenario.outcomes.alternate],
-    [Array<string>(12).fill('wait'), scenario.outcomes.deadline],
+    [['transport', ...Array<string>(11).fill('wait'), 'primary', 'wait'], scenario.outcomes.deadline],
   ] as const) {
     const created = await fetch(base + '/sessions', { method: 'POST', headers, body: JSON.stringify({ caseId: scenario.info.id, version: scenario.info.version }) })
     assert.equal(created.status, 201)
@@ -159,7 +159,11 @@ test('alternate transfer and unresolved deadline through the API', async t => {
     }
     const review = await fetch(base + '/sessions/' + session.id + '/debrief', { headers })
     assert.equal(review.status, 200)
-    assert.equal((await review.json()).outcome, outcome)
+    const report = await review.json()
+    assert.equal(report.outcome, outcome)
+    if (outcome === scenario.outcomes.deadline) {
+      assert.ok(report.timeline.some((entry: { id: string }) => entry.id === 'task-interrupted'))
+    }
   }
 })
 
@@ -212,12 +216,14 @@ test('admission throttling, migration ledger, and bounded retention', async t =>
     await client.query("INSERT INTO session_debriefs VALUES ($1,'{}')", [id])
     await client.query("INSERT INTO session_commands VALUES ($1,$2,'test','{}')", [id, randomUUID()])
     await client.query("INSERT INTO rate_limits VALUES ($1,0,'create',1)", [owner])
-    await client.query("INSERT INTO guest_admissions VALUES (0,$1,1)", [owner])
-    const dryRun = await retain(client, false)
-    assert.ok(dryRun.sessions >= 1)
+    await client.query("INSERT INTO guest_admissions SELECT -n, $1, 1 FROM generate_series(1,1001) AS n", [owner])
+    const useTestTransaction: typeof transaction = task => task(client)
+    const dryRun = await retain(false, useTestTransaction)
+    assert.ok(dryRun.sessions >= 1 && dryRun.guests >= 1 && dryRun.guest_admissions >= 1001)
     assert.equal((await client.query('SELECT 1 FROM sessions WHERE id=$1', [id])).rowCount, 1)
-    const applied = await retain(client, true)
-    assert.ok(applied.sessions >= 1 && applied.guests >= 1 && applied.guest_admissions >= 1)
+    const applied = await retain(true, useTestTransaction)
+    assert.deepEqual(applied, dryRun)
+    assert.equal((await client.query('SELECT 1 FROM guest_admissions WHERE source_hash=$1', [owner])).rowCount, 0)
     for (const table of ['session_events', 'session_commands', 'session_debriefs']) {
       assert.equal((await client.query(`SELECT 1 FROM ${table} WHERE session_id=$1`, [id])).rowCount, 0)
     }

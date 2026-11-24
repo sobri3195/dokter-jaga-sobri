@@ -75,8 +75,8 @@ async function bootstrapGuest(req: IncomingMessage, res: ServerResponse) {
   const cookie = guestCookie(req)
   const result = await transaction(async client => {
     if (cookie) {
-      if ((await touchGuest(client, cookie)).rowCount) return { id: cookie }
-      if ((await client.query('SELECT 1 FROM guests WHERE id=$1', [cookie])).rowCount) return { id: cookie }
+      if ((await touchGuest(client, cookie)).rowCount) return cookie
+      if ((await client.query('SELECT 1 FROM guests WHERE id=$1', [cookie])).rowCount) return cookie
     }
     // Use only the Vercel-managed source header on Vercel. Standalone deployments use the TCP peer.
     const forwarded = process.env.VERCEL === '1' ? req.headers['x-vercel-forwarded-for'] : undefined
@@ -88,16 +88,15 @@ async function bootstrapGuest(req: IncomingMessage, res: ServerResponse) {
     if (!rows.length) return undefined
     const id = randomUUID()
     await client.query('INSERT INTO guests (id) VALUES ($1)', [id])
-    return { id, issued: true }
+    return id
   })
   if (!result) {
     res.setHeader('Retry-After', '60')
     fail(429, 'Terlalu banyak identitas tamu baru. Coba lagi dalam satu menit.')
   }
-  if (result.issued) {
-    const https = process.env.VERCEL === '1' || process.env.APP_ORIGIN?.startsWith('https://') || req.headers['x-forwarded-proto'] === 'https'
-    res.setHeader('Set-Cookie', `jaga_guest=${result.id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${https ? '; Secure' : ''}`)
-  }
+  const https = process.env.VERCEL === '1' || process.env.APP_ORIGIN?.startsWith('https://') || req.headers['x-forwarded-proto'] === 'https'
+  // Refresh the same credential only through the bootstrap route, which the browser serializes.
+  res.setHeader('Set-Cookie', `jaga_guest=${result}; Path=/; HttpOnly; SameSite=Lax; Max-Age=7776000${https ? '; Secure' : ''}`)
 }
 
 async function permit(client: PoolClient, id: string, kind: 'create' | 'action') {

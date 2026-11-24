@@ -30,7 +30,7 @@ Buka `http://localhost:5173` dengan browser yang mendukung Web Locks. Deployment
 5. Pilih **Tunggu 5 menit** sampai ambulans siap, lalu selesaikan transfer. Baca debrief dan coba **Ulang kasus**.
 6. Untuk jalur alternatif, mulai sesi baru, siapkan transportasi, tunggu dua kali, telepon RS utama, lalu nilai ulang. Hubungi RS alternatif setelah RS utama menyatakan belum siap. Tunggu sampai RS dan ambulans siap, kirim handover, lalu selesaikan transfer. Untuk luaran hambatan, tunggu sampai skenario berakhir.
 
-Daftar sesi dapat dimuat tanpa menerbitkan cookie. Sebelum membuat sesi, browser menyiapkan identitas melalui `POST /api/guests` dengan JSON `{}` dan origin yang sama, lalu memakai cookie yang diterbitkan untuk `POST /api/sessions`. Browser mengunci proses penyiapan per origin agar tab lain menunggu sebelum menerbitkan cookie.
+Daftar sesi dapat dimuat tanpa menerbitkan cookie. Sebelum membuat sesi, browser menyiapkan identitas melalui `POST /api/guests` dengan JSON `{}` dan origin yang sama, lalu memakai cookie yang diterbitkan untuk `POST /api/sessions`. Browser mengunci proses penyiapan per origin agar tab lain menunggu sebelum menerbitkan cookie. Memulai kasus memperpanjang akses cookie yang sama hingga 90 hari, termasuk untuk cookie lama yang masih berlaku. Riwayat tersedia selama cookie dan sesi masih ada.
 
 ## Verifikasi
 
@@ -41,7 +41,7 @@ npm test
 npm run build
 ```
 
-Untuk uji integrasi, gunakan database Postgres **khusus pengujian**. Tes menyisipkan versi sementara dan membuat sesi.
+Untuk uji integrasi, gunakan database Postgres **khusus pengujian**. Tes menyisipkan versi sintetis dan membuat sesi. CI menggunakan database terpisah untuk smoke test API dan browser agar keduanya menguji seed aplikasi.
 
 ```sh
 docker exec jaga-igd-postgres createdb -U jaga jaga_igd_test
@@ -67,5 +67,5 @@ Debrief baru mencatat rentang waktu dan informasi yang terlihat saat aksi dipili
 
 - Jalankan `npm run db:setup` sebelum deploy. Runner mengunci migrasi dan menyimpan checksum SHA-256. Buat file migrasi baru untuk perubahan berikutnya. Untuk database lama, migrasi 001 dan 002 yang idempoten dicatat saat setup pertama dengan ledger.
 - Versi kasus yang sudah diterbitkan bersifat append-only dan mematok versi mesin beserta rubriknya. Untuk perubahan perilaku yang perlu dipisahkan dari sesi lama, terbitkan versi mesin baru dan versi kasus baru. Pertahankan implementasi mesin lama selama sesi yang merujuknya masih disimpan.
-- Jalankan `npm run db:cleanup` untuk menghitung kandidat pembersihan. `npm run db:cleanup -- --apply` menghapus hingga 1.000 kandidat per tabel dalam satu transaksi. Atur jadwal harian di runner yang memakai database target. Bucket kuota disimpan 24 jam. Sesi tanpa aksi selama 90 hari dan identitas tamu yang tidak aktif selama 90 hari serta tidak memiliki sesi dapat dihapus. Penghapusan sesi juga menghapus peristiwa, perintah, dan debrief terkait. Saat migrasi dari skema lama, hitungan masa simpan sesi yang sudah ada dimulai dari waktu migrasi.
+- Jalankan `npm run db:cleanup` untuk menghitung kandidat pembersihan, termasuk tamu yang memenuhi syarat setelah sesi kedaluwarsanya dihapus. `npm run db:cleanup -- --apply` mengosongkan backlog dengan transaksi terpisah untuk setiap batch hingga 1.000 baris. Workflow Retensi Data dijadwalkan per jam dan memerlukan variabel repositori `ENABLE_DATA_RETENTION=true` serta secret `DATABASE_URL` di environment GitHub `production-maintenance`. Bucket kuota memenuhi syarat untuk dihapus setelah 24 jam. Sesi tanpa aksi selama 90 hari dan identitas tamu yang tidak aktif selama 90 hari serta tidak memiliki sesi dapat dihapus. Penghapusan sesi juga menghapus peristiwa, perintah, dan debrief terkait. Saat migrasi dari skema lama, hitungan masa simpan sesi yang sudah ada dimulai dari waktu migrasi.
 - Penerbitan cookie dibatasi 30 identitas baru per sumber per menit. Vercel memakai header alamat klien yang disediakan platform, sedangkan server lokal memakai alamat koneksi. Log backend mencatat operasi, kode galat database bila tersedia, dan `X-Request-Id` untuk korelasi tanpa mencetak cookie, payload, atau kredensial.

@@ -1,0 +1,32 @@
+name: Retensi Data
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-data-retention
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: vars.ENABLE_DATA_RETENTION == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production-maintenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Hapus data yang melewati masa simpan
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          test -n "$DATABASE_URL" || { echo "DATABASE_URL belum tersedia."; exit 1; }
+          npm run db:cleanup -- --apply
