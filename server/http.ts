@@ -1,9 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createHash, randomUUID } from 'node:crypto'
+import { isIP } from 'node:net'
 import type { PoolClient } from 'pg'
 import { z } from 'zod'
-import { pool, transaction } from './db'
-import { apply, debrief, initial, snapshot } from './engine'
+import { logDatabaseError, transaction } from './db'
+import { engineFor } from './engine'
 import type { State } from './engine'
 import type { Scenario } from './scenario'
 
@@ -53,14 +54,46 @@ function origin(req: IncomingMessage) {
   if (!allowed || req.headers.origin !== allowed) fail(403, 'Asal permintaan tidak diizinkan.')
 }
 
-async function guest(req: IncomingMessage, res: ServerResponse) {
+function guestCookie(req: IncomingMessage) {
   const cookie = req.headers.cookie?.match(/(?:^|;\s*)jaga_guest=([^;]+)/)?.[1]
-  if (uuid.safeParse(cookie).success && (await pool().query('SELECT 1 FROM guests WHERE id=$1', [cookie])).rowCount) return cookie!
-  const id = randomUUID()
-  await pool().query('INSERT INTO guests VALUES ($1)', [id])
-  const https = process.env.VERCEL === '1' || process.env.APP_ORIGIN?.startsWith('https://') || req.headers['x-forwarded-proto'] === 'https'
-  res.setHeader('Set-Cookie', `jaga_guest=${id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${https ? '; Secure' : ''}`)
+  return cookie && uuid.safeParse(cookie).success ? cookie : undefined
+}
+
+function owner(req: IncomingMessage) {
+  const id = guestCookie(req)
+  if (!id) fail(404, 'Sesi tidak ditemukan.')
   return id
+}
+
+async function guest(req: IncomingMessage, res: ServerResponse) {
+  const cookie = guestCookie(req)
+  const result = await transaction(async client => {
+    if (cookie) {
+      if ((await client.query(`UPDATE guests SET last_seen_at=now()
+        WHERE id=$1 AND last_seen_at < now() - interval '1 day' RETURNING id`, [cookie])).rowCount) return { id: cookie }
+      if ((await client.query('SELECT 1 FROM guests WHERE id=$1', [cookie])).rowCount) return { id: cookie }
+    }
+    // Use only the Vercel-managed source header on Vercel. Standalone deployments use the TCP peer.
+    const forwarded = process.env.VERCEL === '1' ? req.headers['x-vercel-forwarded-for'] : undefined
+    const source = typeof forwarded === 'string' && isIP(forwarded) ? forwarded : req.socket.remoteAddress ?? 'unknown'
+    const sourceHash = createHash('sha256').update(source).digest('hex')
+    const { rows } = await client.query(`INSERT INTO guest_admissions VALUES (floor(extract(epoch from now()) / 60), $1, 1)
+      ON CONFLICT (bucket, source_hash) DO UPDATE SET count = guest_admissions.count + 1
+      WHERE guest_admissions.count < 30 RETURNING count`, [sourceHash])
+    if (!rows.length) return undefined
+    const id = randomUUID()
+    await client.query('INSERT INTO guests (id) VALUES ($1)', [id])
+    return { id, issued: true }
+  })
+  if (!result) {
+    res.setHeader('Retry-After', '60')
+    fail(429, 'Terlalu banyak identitas tamu baru. Coba lagi dalam satu menit.')
+  }
+  if (result.issued) {
+    const https = process.env.VERCEL === '1' || process.env.APP_ORIGIN?.startsWith('https://') || req.headers['x-forwarded-proto'] === 'https'
+    res.setHeader('Set-Cookie', `jaga_guest=${result.id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${https ? '; Secure' : ''}`)
+  }
+  return result.id
 }
 
 async function permit(client: PoolClient, id: string, kind: 'create' | 'action') {
@@ -72,18 +105,17 @@ async function permit(client: PoolClient, id: string, kind: 'create' | 'action')
   return rows[0].count <= (kind === 'create' ? 12 : 120)
 }
 
-interface Stored { id: string; snapshot: State; revision: number; definition: Scenario; finished: boolean }
+interface Stored { id: string; snapshot: State; revision: number; definition: Scenario; finished: boolean; engine_version: number }
 
-const sessionQuery = `SELECT s.id,s.snapshot,s.revision,s.finished,v.definition
+const sessionQuery = `SELECT s.id,s.snapshot,s.revision,s.finished,v.definition,v.engine_version
  FROM sessions s JOIN case_versions v ON (v.case_id,v.version)=(s.case_id,s.version)
  WHERE s.id=$1 AND s.guest_id=$2`
 
-async function create(req: IncomingMessage, owner: string) {
-  const input = await body(req, creation)
+async function create(input: z.infer<typeof creation>, owner: string) {
   return transaction(async client => {
     if (input.creationId) {
       await client.query('SELECT id FROM guests WHERE id=$1 FOR NO KEY UPDATE', [owner])
-      const { rows: existing } = await client.query<Stored>(`SELECT s.id,s.snapshot,s.revision,s.finished,v.definition
+      const { rows: existing } = await client.query<Stored>(`SELECT s.id,s.snapshot,s.revision,s.finished,v.definition,v.engine_version
         FROM sessions s JOIN case_versions v ON (v.case_id,v.version)=(s.case_id,s.version)
         WHERE s.guest_id=$1 AND s.creation_id=$2`, [owner, input.creationId])
       const replay = existing[0]
@@ -92,13 +124,14 @@ async function create(req: IncomingMessage, owner: string) {
         if (id !== input.caseId || version !== input.version) {
           return new HttpError(409, 'ID pembuatan sesi sudah dipakai untuk kasus atau versi berbeda.')
         }
-        return snapshot(replay.definition, replay.snapshot, replay.id, replay.revision)
+        return engineFor(replay.engine_version).snapshot(replay.definition, replay.snapshot, replay.id, replay.revision)
       }
     }
     if (!await permit(client, owner, 'create')) return new HttpError(429, 'Terlalu banyak sesi. Coba lagi dalam satu menit.')
-    const { rows } = await client.query<{ definition: Scenario }>('SELECT definition FROM case_versions WHERE case_id=$1 AND version=$2', [input.caseId, input.version])
+    const { rows } = await client.query<{ definition: Scenario; engine_version: number }>('SELECT definition,engine_version FROM case_versions WHERE case_id=$1 AND version=$2', [input.caseId, input.version])
     if (!rows.length) return new HttpError(404, 'Versi kasus tidak ditemukan.')
-    const { definition } = rows[0]
+    const { definition, engine_version } = rows[0]
+    const { initial, snapshot } = engineFor(engine_version)
     const id = randomUUID()
     const state = initial(definition)
     await client.query('INSERT INTO sessions (id,guest_id,case_id,version,snapshot,creation_id) VALUES ($1,$2,$3,$4,$5,$6)', [id, owner, input.caseId, input.version, state, input.creationId ?? null])
@@ -123,16 +156,17 @@ async function act(req: IncomingMessage, owner: string, id: string) {
     const replay = (await client.query('SELECT fingerprint,response FROM session_commands WHERE session_id=$1 AND command_id=$2', [id, input.commandId])).rows[0]
     if (replay) {
       if (replay.fingerprint !== fingerprint) return new HttpError(409, 'ID perintah sudah dipakai untuk data berbeda.')
-      return replay.response as ReturnType<typeof snapshot>
+      return replay.response as ReturnType<ReturnType<typeof engineFor>['snapshot']>
     }
     if (!await permit(client, owner, 'action')) return new HttpError(429, 'Terlalu banyak aksi. Coba lagi dalam satu menit.')
     if (row.revision !== input.expectedRevision) return new HttpError(409, 'Sesi berubah di tab lain. Kondisi terbaru akan dimuat.')
     if (row.finished) return new HttpError(409, 'Sesi sudah selesai.')
+    const { apply, debrief, snapshot } = engineFor(row.engine_version)
     const state = apply(row.definition, row.snapshot, input.actionId)
     if (!state) return new HttpError(422, 'Aksi ini tidak tersedia pada kondisi sekarang.')
     const revision = row.revision + 1
     const response = snapshot(row.definition, state, id, revision)
-    await client.query('UPDATE sessions SET revision=$2,snapshot=$3,finished=$4 WHERE id=$1', [id, revision, state, !!state.outcome])
+    await client.query('UPDATE sessions SET revision=$2,snapshot=$3,finished=$4,last_activity_at=now() WHERE id=$1', [id, revision, state, !!state.outcome])
     await saveEvents(client, id, state, row.snapshot.events.length)
     await client.query('INSERT INTO session_commands VALUES ($1,$2,$3,$4)', [id, input.commandId, fingerprint, response])
     if (state.outcome) await client.query('INSERT INTO session_debriefs VALUES ($1,$2)', [id, debrief(row.definition, state)])
@@ -144,27 +178,34 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   res.setHeader('Cache-Control', 'private, no-store')
   res.setHeader('Vary', 'Cookie')
   res.setHeader('X-Content-Type-Options', 'nosniff')
+  const requestId = randomUUID()
+  res.setHeader('X-Request-Id', requestId)
+  let operation = 'http.routing'
   try {
     const url = new URL(req.url ?? '/', 'http://internal.invalid')
     const path = url.pathname === '/api/dispatch' ? '/api/' + url.searchParams.get('route') : url.pathname
     const method = req.method
     if (method === 'POST') origin(req)
     if (method === 'GET' && path === '/api/cases') {
-      const { rows } = await pool().query(`SELECT DISTINCT ON (case_id) definition->'info' AS info
-        FROM case_versions ORDER BY case_id, version DESC`)
+      operation = 'cases.list'
+      const { rows } = await transaction(client => client.query(`SELECT DISTINCT ON (case_id) definition->'info' AS info
+        FROM case_versions ORDER BY case_id, version DESC`))
       return send(res, 200, rows.map(row => row.info))
     }
     if (path === '/api/sessions') {
       if (method === 'GET') {
+        operation = 'sessions.list'
         const owner = await guest(req, res)
-        const { rows } = await pool().query(`SELECT s.id,v.definition->'info'->>'title' AS title,
+        const { rows } = await transaction(client => client.query(`SELECT s.id,v.definition->'info'->>'title' AS title,
           CASE WHEN s.finished THEN 'finished' ELSE 'active' END AS status, s.created
           FROM sessions s JOIN case_versions v ON (v.case_id,v.version)=(s.case_id,s.version)
-          WHERE guest_id=$1 ORDER BY created DESC`, [owner])
+          WHERE guest_id=$1 ORDER BY created DESC, s.id DESC`, [owner]))
         return send(res, 200, rows)
       }
       if (method === 'POST') {
-        const result = await create(req, await guest(req, res))
+        operation = 'sessions.create'
+        const input = await body(req, creation)
+        const result = await create(input, await guest(req, res))
         if (result instanceof HttpError) throw result
         return send(res, 201, result)
       }
@@ -173,26 +214,31 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     if (!match || !uuid.safeParse(match[1]).success) fail(404, 'Rute tidak ditemukan.')
     const [, id, resource] = match
     if (method === 'GET' && !resource) {
-      const { rows } = await pool().query<Stored>(sessionQuery, [id, await guest(req, res)])
+      operation = 'sessions.get'
+      const guestId = owner(req)
+      const { rows } = await transaction(client => client.query<Stored>(sessionQuery, [id, guestId]))
       if (!rows.length) fail(404, 'Sesi tidak ditemukan.')
       const row = rows[0]
-      return send(res, 200, snapshot(row.definition, row.snapshot, id, row.revision))
+      return send(res, 200, engineFor(row.engine_version).snapshot(row.definition, row.snapshot, id, row.revision))
     }
     if (method === 'GET' && resource === 'debrief') {
-      const { rows } = await pool().query(`SELECT d.result FROM session_debriefs d JOIN sessions s ON s.id=d.session_id
-        WHERE s.id=$1 AND s.guest_id=$2`, [id, await guest(req, res)])
+      operation = 'sessions.debrief'
+      const guestId = owner(req)
+      const { rows } = await transaction(client => client.query(`SELECT d.result FROM session_debriefs d JOIN sessions s ON s.id=d.session_id
+        WHERE s.id=$1 AND s.guest_id=$2`, [id, guestId]))
       if (!rows.length) fail(404, 'Debrief belum tersedia.')
       return send(res, 200, rows[0].result)
     }
     if (method === 'POST' && resource === 'actions') {
-      const result = await act(req, await guest(req, res), id)
+      operation = 'sessions.action'
+      const result = await act(req, owner(req), id)
       if (result instanceof HttpError) throw result
       return send(res, 200, result)
     }
     fail(405, 'Metode tidak didukung.')
   } catch (error) {
     if (error instanceof HttpError) return send(res, error.status, { error: error.message })
-    console.error('Database or request processing error', error instanceof Error ? error.name : 'unknown')
-    return send(res, 500, { error: 'Terjadi galat server. Coba lagi.' })
+    logDatabaseError(operation, error, requestId)
+    return send(res, 500, { error: 'Terjadi galat server. Coba lagi.', requestId })
   }
 }

@@ -60,3 +60,10 @@ Jalankan `npm run test:browser` dengan server pengembangan aktif. Uji pada lebar
 Untuk smoke test deployment, jalankan `SMOKE_URL=https://alamat-preview npm run test:deployment` setelah migrasi. Tes membuat satu sesi fiktif dan memeriksa cookie HTTPS, penolakan origin berbeda, refresh, pengiriman ulang perintah, konflik revisi, serta debrief. Gunakan Preview dengan database khusus Preview dan akses yang mengizinkan runner. Untuk browser, jalankan `BROWSER_URL=https://alamat-preview npm run test:browser`.
 
 Debrief baru mencatat rentang waktu dan informasi yang terlihat saat aksi dipilih. Hasil yang sudah tersimpan tetap tersedia dalam format semula. Rubrik proses tetap berstatus draf hingga T12 dan T13 selesai.
+
+## Operasional data
+
+- Jalankan `npm run db:setup` sebelum deploy. Runner mengunci migrasi dan menyimpan checksum SHA-256. Buat file migrasi baru untuk perubahan berikutnya. Untuk database lama, migrasi 001 dan 002 yang idempoten dicatat saat setup pertama dengan ledger.
+- Versi kasus yang sudah diterbitkan bersifat append-only dan mematok versi mesin beserta rubriknya. Untuk perubahan perilaku yang perlu dipisahkan dari sesi lama, terbitkan versi mesin baru dan versi kasus baru. Pertahankan implementasi mesin lama selama sesi yang merujuknya masih disimpan.
+- Jalankan `npm run db:cleanup` untuk menghitung kandidat pembersihan. `npm run db:cleanup -- --apply` menghapus hingga 1.000 kandidat per tabel dalam satu transaksi. Atur jadwal harian di runner yang memakai database target. Bucket kuota disimpan 24 jam. Sesi tanpa aksi selama 90 hari dan identitas tamu yang tidak aktif selama 90 hari serta tidak memiliki sesi dapat dihapus. Penghapusan sesi juga menghapus peristiwa, perintah, dan debrief terkait. Saat migrasi dari skema lama, hitungan masa simpan sesi yang sudah ada dimulai dari waktu migrasi.
+- Penerbitan cookie dibatasi 30 identitas baru per sumber per menit. Vercel memakai header alamat klien yang disediakan platform, sedangkan server lokal memakai alamat koneksi. Log backend mencatat operasi, kode galat database bila tersedia, dan `X-Request-Id` untuk korelasi tanpa mencetak cookie, payload, atau kredensial.
