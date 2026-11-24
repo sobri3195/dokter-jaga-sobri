@@ -8,11 +8,13 @@ import handler from '../server/http'
 import { pool } from '../server/db'
 import { scenario } from '../server/scenario'
 
+test.after(() => pool().end())
+
 test('Postgres transactions and session API', async t => {
   assert.ok(process.env.DATABASE_URL, 'Use a dedicated test database and run db:setup first.')
   const server = createServer(handler).listen(0, '127.0.0.1')
   await once(server, 'listening')
-  t.after(async () => { server.close(); await pool().end() })
+  t.after(() => server.close())
   const base = 'http://127.0.0.1:' + (server.address() as AddressInfo).port
   const origin = process.env.APP_ORIGIN ?? 'http://localhost:5173'
   let cookie = ''
@@ -88,5 +90,37 @@ test('Postgres transactions and session API', async t => {
     assert.equal((await req('/sessions')).data.find((item: { id: string }) => item.id === created.data.id).status, 'finished')
   } finally {
     await pool().query('DELETE FROM case_versions WHERE case_id=$1 AND version=$2', [next.info.id, next.info.version])
+  }
+})
+
+
+test('alternate transfer and unresolved deadline through the API', async t => {
+  const server = createServer(handler).listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const base = 'http://127.0.0.1:' + (server.address() as AddressInfo).port + '/api'
+  t.after(() => server.close())
+  const origin = process.env.APP_ORIGIN ?? 'http://localhost:5173'
+  const list = await fetch(base + '/sessions')
+  const cookie = list.headers.get('set-cookie')!.split(';')[0]
+  await list.json()
+  const headers = { cookie, origin, 'Content-Type': 'application/json' }
+
+  for (const [actions, outcome] of [
+    [['transport', 'wait', 'wait', 'primary', 'reassess', 'alternate', 'wait', 'wait', 'handover', 'transfer'], scenario.outcomes.alternate],
+    [Array<string>(12).fill('wait'), scenario.outcomes.deadline],
+  ] as const) {
+    const created = await fetch(base + '/sessions', { method: 'POST', headers, body: JSON.stringify({ caseId: scenario.info.id, version: scenario.info.version }) })
+    assert.equal(created.status, 201)
+    const session = await created.json()
+    for (const [expectedRevision, actionId] of actions.entries()) {
+      const response = await fetch(base + '/sessions/' + session.id + '/actions', {
+        method: 'POST', headers, body: JSON.stringify({ expectedRevision, actionId, commandId: randomUUID() }),
+      })
+      const value = await response.json()
+      assert.equal(response.status, 200, `${actionId}: ${JSON.stringify(value)}`)
+    }
+    const review = await fetch(base + '/sessions/' + session.id + '/debrief', { headers })
+    assert.equal(review.status, 200)
+    assert.equal((await review.json()).outcome, outcome)
   }
 })
