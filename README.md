@@ -1,0 +1,58 @@
+# Jaga IGD
+
+Simulasi edukasi berbahasa Indonesia untuk latihan dokter jaga di fasilitas terbatas. Kasus **Jatuh Sore, Mengantuk Tengah Malam** menggunakan data fiktif. Ambang klinis dan rubrik proses menunggu telaah. Semua aksi memakai pilihan yang tersedia dalam simulasi.
+
+## Jalankan secara lokal
+
+Gunakan Node.js 24, npm, dan Postgres. Contoh berikut membuat database lokal dengan Docker.
+
+```sh
+npm ci
+docker run --rm -d --name jaga-igd-postgres \
+  -e POSTGRES_USER=jaga -e POSTGRES_PASSWORD=jaga -e POSTGRES_DB=jaga_igd \
+  -p 127.0.0.1:5432:5432 postgres:17
+docker exec jaga-igd-postgres pg_isready -U jaga -d jaga_igd
+cp .env.example .env
+npm run db:setup
+npm run dev
+```
+
+Buka `http://localhost:5173`. Vite meneruskan permintaan `/api` ke server pengembangan pada port 3001. Isi `APP_ORIGIN` dengan origin halaman yang tepat jika mengubah alamat. Simpan `DATABASE_URL` di sisi server. `.env` diabaikan oleh Git.
+
+`npm run db:setup` menjalankan migrasi di `db/` dan menambahkan versi kasus dari `server/scenario.ts`. Jalankan kembali untuk setup yang sama. Untuk mengubah isi skenario yang sudah diterbitkan, naikkan nomor versi. Sesi lama tetap merujuk ke versi awalnya. Sesi yang dipilih melalui **Ulang kasus** memakai versi kasus yang diulang.
+
+## Demonstrasi
+
+1. Pilih **Mulai kasus**, baca brief, lalu pilih **Masuk IGD**.
+2. Di **Aksi**, delegasikan panggilan ke RS utama dan nilai ulang pasien saat panggilan berlangsung. Kedua hasil muncul pada menit 5.
+3. Siapkan transportasi. Di **Rujukan**, kirim handover awal pada menit 8.
+4. Nilai ulang pasien sekali lagi. Kembali ke **Rujukan**, baca temuan baru, dan pilih **Perbarui handover**.
+5. Pilih **Tunggu 5 menit** sampai ambulans siap, lalu selesaikan transfer. Baca debrief dan coba **Ulang kasus**.
+6. Untuk jalur alternatif, mulai sesi baru, siapkan transportasi, tunggu dua kali, telepon RS utama, lalu nilai ulang. Hubungi RS alternatif setelah RS utama menyatakan belum siap. Tunggu sampai RS dan ambulans siap, kirim handover, lalu selesaikan transfer. Untuk luaran hambatan, tunggu sampai skenario berakhir.
+
+## Verifikasi
+
+```sh
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+Untuk uji integrasi, gunakan database Postgres **khusus pengujian**. Tes menyisipkan versi sementara dan membuat sesi.
+
+```sh
+docker exec jaga-igd-postgres createdb -U jaga jaga_igd_test
+DATABASE_URL=postgresql://jaga:jaga@127.0.0.1:5432/jaga_igd_test npm run db:setup
+DATABASE_URL=postgresql://jaga:jaga@127.0.0.1:5432/jaga_igd_test npm run test:integration
+```
+
+Jalankan `npm run test:browser` dengan server pengembangan aktif. Uji menggunakan Chromium lokal pada lebar 360 piksel. Gunakan `CHROMIUM_PATH` bila executable berada di luar `/usr/bin/chromium`, dan `BROWSER_URL` bila alamat aplikasi berbeda.
+
+## Vercel dan Neon
+
+- Pilih preset **Vite**, Node.js 24, dan output `dist`. Vercel Function di `api/dispatch.ts` menangani rute API.
+- Siapkan database Neon berbeda untuk Preview dan Production. Isi `DATABASE_URL` pada scope yang sesuai dengan connection string TLS dari Neon. Driver `pg` memakai koneksi TCP dan menjalankan setiap transaksi pada satu client.
+- Atur `APP_ORIGIN` bila memakai satu domain tetap. Bila nilainya kosong di Vercel, API menggunakan host HTTPS deployment agar Preview per branch dapat menerima permintaan same-origin.
+- Jalankan `npm run db:setup` dengan URL database target sebelum menggunakan deployment. Simpan kredensial di konfigurasi server Vercel dan jalankan migrasi melalui koneksi admin yang sesuai.
+- Uji **Mulai kasus**, refresh sesi, aksi, dan debrief di Preview sebelum promosi ke Production. Verifikasi lokal memakai Postgres 17. Vercel Preview, telaah klinis (T12), dan uji peserta (T13) masih tertunda.
