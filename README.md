@@ -47,7 +47,7 @@ DATABASE_URL=postgresql://jaga:jaga@127.0.0.1:5432/jaga_igd_test npm run db:setu
 DATABASE_URL=postgresql://jaga:jaga@127.0.0.1:5432/jaga_igd_test npm run test:integration
 ```
 
-Jalankan `npm run test:browser` dengan server pengembangan aktif. Uji menggunakan Chromium lokal pada lebar 360 piksel. Gunakan `CHROMIUM_PATH` bila executable berada di luar `/usr/bin/chromium`, dan `BROWSER_URL` bila alamat aplikasi berbeda.
+Jalankan `npm run test:browser` dengan server pengembangan aktif. Uji pada lebar 360 piksel memakai Chromium sistem atau browser yang diinstal melalui `npx playwright-core install chromium`. Gunakan `CHROMIUM_PATH` untuk executable tertentu dan `BROWSER_URL` bila alamat aplikasi berbeda. GitHub Actions menjalankan pemeriksaan yang sama pada pull request dan push ke `main`.
 
 ## Vercel dan Neon
 

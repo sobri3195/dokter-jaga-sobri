@@ -38,6 +38,7 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [notice, setNotice] = useState('')
+  const [needsSync, setNeedsSync] = useState(false)
   const [pending, setPending] = useState<Pending>()
   const [loading, setLoading] = useState(true)
   const lock = useRef(false)
@@ -56,6 +57,7 @@ function App() {
   async function open(id: string) {
     const state = await api<Snapshot>('/sessions/' + id)
     const stored = sessionStorage.getItem(pendingKey(id))
+    setNeedsSync(false)
     setPending(stored ? JSON.parse(stored) as Pending : undefined)
     setResult(undefined)
     accept(state)
@@ -115,6 +117,7 @@ function App() {
   function start(info: CaseInfo) {
     return run(async () => {
       const state = await api<Snapshot>('/sessions', { caseId: info.id, version: info.version })
+      setNeedsSync(false)
       setPending(undefined)
       setBrief(undefined)
       setResult(undefined)
@@ -126,8 +129,20 @@ function App() {
     })
   }
 
+  async function syncSession(id: string) {
+    try {
+      const state = await api<Snapshot>('/sessions/' + id)
+      accept(state)
+      setNeedsSync(false)
+      setNotice('Kondisi sesi terbaru sudah dimuat.')
+      if (state.status === 'finished') focusHeading()
+    } catch {
+      setMessage('Sesi berubah, tetapi kondisi terbaru belum dapat dimuat. Muat ulang kondisi sesi sebelum memilih aksi.')
+    }
+  }
+
   function act(actionId?: string) {
-    if (!current) return
+    if (!current || needsSync) return
     const previous = current
     return run(async () => {
       const payload = pending ?? (actionId && {
@@ -150,7 +165,9 @@ function App() {
         if (error instanceof RequestError && error.status < 500) {
           clear()
           if (error.status === 409 || error.status === 422) {
-            accept(await api<Snapshot>('/sessions/' + previous.id))
+            setNeedsSync(true)
+            await syncSession(previous.id)
+            return
           }
         }
         throw error
@@ -220,14 +237,15 @@ function App() {
               <div className="vitals"><table><thead><tr>{['Menit', 'Nadi', 'TD', 'RR', 'SpO₂'].map(label => <th key={label} scope="col">{label}</th>)}</tr></thead><tbody>{current.vitals.map(v => <tr key={v.minute}><td>{v.minute}</td><td>{v.pulse}</td><td>{v.pressure}</td><td>{v.breathing}</td><td>{v.oxygen}%</td></tr>)}</tbody></table></div>
               <p className="muted">Ambang dan aturan klinis menunggu telaah.</p>
             </>}
-            {panel === 'Aksi' && <div className="actions">{current.options.map(option => <button key={option.id} disabled={busy || !!pending} onClick={() => void act(option.id)}>{option.label}<small>{option.duration ? `${option.duration} mnt` : '0 mnt'}</small></button>)}</div>}
+            {panel === 'Aksi' && <div className="actions">{current.options.map(option => <button key={option.id} disabled={busy || !!pending || needsSync} onClick={() => void act(option.id)}>{option.label}<small>{option.duration ? `${option.duration} mnt` : '0 mnt'}</small></button>)}</div>}
             {panel === 'Rujukan' && <>
               <dl className="referral"><div><dt>RS penerima</dt><dd>{current.receiver}</dd></div><div><dt>Transportasi</dt><dd>{current.transport}</dd></div></dl>
               <h3>Handover terakhir</h3>
               {latest ? <><p>{latest.destination} · {clock(latest.minute)}</p><dl>{latest.sections.map(section => <div key={section.label}><dt>{section.label}</dt><dd>{section.text}</dd></div>)}</dl></> : <p>Belum dikirim.</p>}
               {current.handover.changes.length > 0 && <><h3>Temuan sejak handover terakhir</h3><Timeline entries={current.handover.changes}/></>}
-              {current.options.some(option => option.id === 'handover') && <button className="primary" disabled={busy || !!pending} onClick={() => void act('handover')}>{latest ? 'Perbarui handover' : 'Kirim handover simulasi'}</button>}
+              {current.options.some(option => option.id === 'handover') && <button className="primary" disabled={busy || !!pending || needsSync} onClick={() => void act('handover')}>{latest ? 'Perbarui handover' : 'Kirim handover simulasi'}</button>}
             </>}
+            {needsSync && <p className="retry"><button disabled={busy} onClick={() => void run(() => syncSession(current.id))}>Muat kondisi terbaru</button></p>}
             {pending && <p className="retry"><button disabled={busy} onClick={() => void act()}>Coba ulang perintah</button></p>}
           </section>
           <aside className="card">

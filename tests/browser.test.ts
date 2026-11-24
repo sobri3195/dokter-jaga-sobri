@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import test from 'node:test'
 import { chromium } from 'playwright-core'
 
 test('360px keyboard, interrupted request, refresh, debrief and repeat', async t => {
-  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium' })
+  const systemChromium = '/usr/bin/chromium'
+  const executablePath = process.env.CHROMIUM_PATH ?? (existsSync(systemChromium) ? systemChromium : undefined)
+  const browser = await chromium.launch({ executablePath })
   t.after(() => browser.close())
-  const page = await browser.newPage({ viewport: { width: 360, height: 800 } })
-  page.setDefaultTimeout(8000)
+  const context = await browser.newContext({ viewport: { width: 360, height: 800 } })
+  context.setDefaultTimeout(8000)
+  const page = await context.newPage()
   await page.goto(process.env.BROWSER_URL ?? 'http://localhost:5173')
   const button = (name: string) => page.getByRole('button', { name, exact: true })
   await button('Mulai kasus').click()
@@ -21,6 +25,12 @@ test('360px keyboard, interrupted request, refresh, debrief and repeat', async t
   await button('Delegasikan panggilan ke RS utama 0 mnt').click()
   await page.getByText('Panggilan ke RS utama', { exact: true }).waitFor()
   const currentId = await page.evaluate(() => sessionStorage.getItem('jaga-session'))
+
+  const secondTab = await context.newPage()
+  await secondTab.goto(page.url())
+  await secondTab.getByRole('button', { name: 'Lanjutkan', exact: true }).click()
+  await secondTab.getByRole('button', { name: 'Aksi', exact: true }).click()
+  const secondWait = secondTab.getByRole('button', { name: 'Tunggu 5 menit 5 mnt', exact: true })
 
   const attempts: string[] = []
   await page.route('**/api/sessions/*/actions', async route => {
@@ -38,6 +48,18 @@ test('360px keyboard, interrupted request, refresh, debrief and repeat', async t
   await page.getByText('Saat dinilai ulang, pasien membuka mata setelah dipanggil berulang.', { exact: true }).first().waitFor()
   assert.deepEqual(attempts, [attempts[0], attempts[0]])
   await page.unroute('**/api/sessions/*/actions')
+
+  // The second tab still has revision 1. Fail its first snapshot reload after the conflict.
+  const snapshotPath = '**/api/sessions/' + currentId
+  await secondTab.route(snapshotPath, route => route.abort(), { times: 1 })
+  await secondWait.click()
+  await secondTab.getByRole('alert').getByText(/kondisi terbaru belum dapat dimuat/).waitFor()
+  assert.equal(await secondWait.isDisabled(), true)
+  await secondTab.getByRole('button', { name: 'Muat kondisi terbaru' }).click()
+  await secondTab.locator('.clock').getByText('+05 mnt', { exact: true }).waitFor()
+  assert.equal(await secondWait.isEnabled(), true)
+  await secondTab.close()
+
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 360)
 
   await button('Aksi').click()
