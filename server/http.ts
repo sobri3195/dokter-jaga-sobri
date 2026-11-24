@@ -9,6 +9,7 @@ import type { State } from './engine'
 import type { Scenario } from './scenario'
 
 const uuid = z.uuid()
+const bootstrap = z.strictObject({})
 const creation = z.strictObject({ caseId: z.string().min(1).max(80), version: z.int().positive().max(2147483647), creationId: uuid.optional() })
 const command = z.strictObject({
   actionId: z.string().min(1).max(40), commandId: uuid, expectedRevision: z.int().nonnegative().max(2147483647),
@@ -65,12 +66,16 @@ function owner(req: IncomingMessage) {
   return id
 }
 
-async function guest(req: IncomingMessage, res: ServerResponse) {
+function touchGuest(client: PoolClient, id: string) {
+  return client.query(`UPDATE guests SET last_seen_at=now()
+    WHERE id=$1 AND last_seen_at < now() - interval '1 day'`, [id])
+}
+
+async function bootstrapGuest(req: IncomingMessage, res: ServerResponse) {
   const cookie = guestCookie(req)
   const result = await transaction(async client => {
     if (cookie) {
-      if ((await client.query(`UPDATE guests SET last_seen_at=now()
-        WHERE id=$1 AND last_seen_at < now() - interval '1 day' RETURNING id`, [cookie])).rowCount) return { id: cookie }
+      if ((await touchGuest(client, cookie)).rowCount) return { id: cookie }
       if ((await client.query('SELECT 1 FROM guests WHERE id=$1', [cookie])).rowCount) return { id: cookie }
     }
     // Use only the Vercel-managed source header on Vercel. Standalone deployments use the TCP peer.
@@ -93,7 +98,6 @@ async function guest(req: IncomingMessage, res: ServerResponse) {
     const https = process.env.VERCEL === '1' || process.env.APP_ORIGIN?.startsWith('https://') || req.headers['x-forwarded-proto'] === 'https'
     res.setHeader('Set-Cookie', `jaga_guest=${result.id}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${https ? '; Secure' : ''}`)
   }
-  return result.id
 }
 
 async function permit(client: PoolClient, id: string, kind: 'create' | 'action') {
@@ -113,8 +117,9 @@ const sessionQuery = `SELECT s.id,s.snapshot,s.revision,s.finished,v.definition,
 
 async function create(input: z.infer<typeof creation>, owner: string) {
   return transaction(async client => {
+    const guest = await client.query('SELECT id FROM guests WHERE id=$1 FOR NO KEY UPDATE', [owner])
+    if (!guest.rowCount) return new HttpError(401, 'Siapkan identitas tamu sebelum memulai sesi.')
     if (input.creationId) {
-      await client.query('SELECT id FROM guests WHERE id=$1 FOR NO KEY UPDATE', [owner])
       const { rows: existing } = await client.query<Stored>(`SELECT s.id,s.snapshot,s.revision,s.finished,v.definition,v.engine_version
         FROM sessions s JOIN case_versions v ON (v.case_id,v.version)=(s.case_id,s.version)
         WHERE s.guest_id=$1 AND s.creation_id=$2`, [owner, input.creationId])
@@ -192,20 +197,32 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         FROM case_versions ORDER BY case_id, version DESC`))
       return send(res, 200, rows.map(row => row.info))
     }
+    if (method === 'POST' && path === '/api/guests') {
+      operation = 'guests.bootstrap'
+      await body(req, bootstrap)
+      await bootstrapGuest(req, res)
+      return send(res, 200, {})
+    }
     if (path === '/api/sessions') {
       if (method === 'GET') {
         operation = 'sessions.list'
-        const owner = await guest(req, res)
-        const { rows } = await transaction(client => client.query(`SELECT s.id,v.definition->'info'->>'title' AS title,
-          CASE WHEN s.finished THEN 'finished' ELSE 'active' END AS status, s.created
-          FROM sessions s JOIN case_versions v ON (v.case_id,v.version)=(s.case_id,s.version)
-          WHERE guest_id=$1 ORDER BY created DESC, s.id DESC`, [owner]))
+        const owner = guestCookie(req)
+        if (!owner) return send(res, 200, [])
+        const { rows } = await transaction(async client => {
+          await touchGuest(client, owner)
+          return client.query(`SELECT s.id,v.definition->'info'->>'title' AS title,
+            CASE WHEN s.finished THEN 'finished' ELSE 'active' END AS status, s.created
+            FROM sessions s JOIN case_versions v ON (v.case_id,v.version)=(s.case_id,s.version)
+            WHERE guest_id=$1 ORDER BY created DESC, s.id DESC`, [owner])
+        })
         return send(res, 200, rows)
       }
       if (method === 'POST') {
         operation = 'sessions.create'
         const input = await body(req, creation)
-        const result = await create(input, await guest(req, res))
+        const owner = guestCookie(req)
+        if (!owner) fail(401, 'Siapkan identitas tamu sebelum memulai sesi.')
+        const result = await create(input, owner)
         if (result instanceof HttpError) throw result
         return send(res, 201, result)
       }

@@ -183,3 +183,101 @@ test('select an older active session and retry a hung mutation with the same ID'
   assert.equal(attempts.length, 2)
   assert.equal(attempts[0], attempts[1])
 })
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(done => { resolve = done })
+  return { promise, resolve }
+}
+
+test('a delayed first-visit list cannot replace the guest established by the other tab', { timeout: 30_000 }, async t => {
+  const systemChromium = '/usr/bin/chromium'
+  const browser = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH ?? (existsSync(systemChromium) ? systemChromium : undefined),
+  })
+  t.after(() => browser.close())
+  const base = new URL(process.env.BROWSER_URL ?? 'http://localhost:5173').origin
+  const context = await browser.newContext()
+  const first = await context.newPage()
+  const second = await context.newPage()
+  const held = deferred<string | null>()
+  const release = deferred<void>()
+  await first.route(base + '/api/sessions', async route => {
+    // An independent HTTP client keeps response headers out of the browser until fulfillment.
+    const response = await fetch(route.request().url())
+    const body = await response.text()
+    held.resolve(response.headers.get('set-cookie'))
+    await release.promise
+    await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body })
+  }, { times: 1 })
+
+  await first.goto(base)
+  const lateCookie = await held.promise
+  const guestCookie = async () => (await context.cookies(base)).find(item => item.name === 'jaga_guest')?.value
+  try {
+    await second.goto(base)
+    await second.getByRole('button', { name: 'Mulai kasus' }).click()
+    await second.getByRole('button', { name: 'Masuk IGD' }).click()
+    await second.locator('.clock').waitFor()
+    const id = await second.evaluate(() => sessionStorage.getItem('jaga-session'))
+    assert.ok(id)
+    const guest = await guestCookie()
+    assert.ok(guest)
+    release.resolve(undefined)
+    await first.getByRole('button', { name: 'Mulai kasus' }).waitFor()
+    assert.equal(await guestCookie(), guest)
+    assert.equal(lateCookie, null)
+    await second.reload()
+    await second.locator('.clock').waitFor()
+    assert.equal(await second.evaluate(() => sessionStorage.getItem('jaga-session')), id)
+  } finally {
+    release.resolve(undefined)
+  }
+})
+
+test('simultaneous first session creation waits for one guest cookie', { timeout: 30_000 }, async t => {
+  const systemChromium = '/usr/bin/chromium'
+  const browser = await chromium.launch({
+    executablePath: process.env.CHROMIUM_PATH ?? (existsSync(systemChromium) ? systemChromium : undefined),
+  })
+  t.after(() => browser.close())
+  const base = new URL(process.env.BROWSER_URL ?? 'http://localhost:5173').origin
+  const context = await browser.newContext()
+  const first = await context.newPage()
+  const second = await context.newPage()
+  const held = deferred<boolean>()
+  const release = deferred<void>()
+  await first.route(base + '/api/guests', async route => {
+    const response = await fetch(route.request().url(), {
+      method: 'POST', headers: { origin: base, 'Content-Type': 'application/json' }, body: '{}',
+    })
+    const body = await response.text()
+    held.resolve(response.ok && response.headers.has('set-cookie'))
+    await release.promise
+    await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body })
+  }, { times: 1 })
+
+  try {
+    for (const page of [first, second]) {
+      await page.goto(base)
+      await page.getByRole('button', { name: 'Mulai kasus' }).click()
+    }
+    await first.getByRole('button', { name: 'Masuk IGD' }).click()
+    assert.equal(await held.promise, true)
+    await second.getByRole('button', { name: 'Masuk IGD' }).click()
+    await second.waitForFunction(async () => {
+      const { pending } = await navigator.locks.query()
+      return pending?.some(lock => lock.name === 'jaga-guest-bootstrap')
+    })
+    assert.equal((await context.cookies(base)).some(item => item.name === 'jaga_guest'), false)
+    assert.equal(await second.locator('.clock').count(), 0)
+    release.resolve(undefined)
+    await Promise.all([first.locator('.clock').waitFor(), second.locator('.clock').waitFor()])
+    const ids = await Promise.all([first, second].map(page => page.evaluate(() => sessionStorage.getItem('jaga-session'))))
+    assert.ok(ids[0] && ids[1] && ids[0] !== ids[1])
+    const list = await (await context.request.get(base + '/api/sessions')).json() as { id: string }[]
+    assert.deepEqual(new Set(list.map(session => session.id)), new Set(ids))
+  } finally {
+    release.resolve(undefined)
+  }
+})
